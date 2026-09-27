@@ -99,7 +99,8 @@ app.post("/api/bank-link/unlink", requireAuth, (_req: Request, res: Response) =>
 });
 
 // El banco redirige aquí el navegador del usuario tras la autorización (sin nuestro JWT de sesión)
-app.get("/api/bank-link/callback", async (req: Request, res: Response) => {
+// La ruta debe coincidir con la redirect_url registrada en Enable Banking (ver config.enableBankingRedirectUrl)
+app.get("/callback", async (req: Request, res: Response) => {
   const { code, state, error, error_description: errorDescription } = req.query;
 
   if (typeof error === "string") {

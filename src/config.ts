@@ -52,7 +52,8 @@ export const config: AppConfig = {
   appUrl: process.env.APP_URL ?? "http://localhost:3000",
   appName: process.env.APP_NAME ?? "Money AI",
   // URL registrada en Enable Banking a la que redirige tras la autorización del usuario
+  // Debe coincidir EXACTAMENTE con una de las redirect_urls registradas para tu aplicación
   enableBankingRedirectUrl:
     process.env.ENABLEBANKING_REDIRECT_URL ??
-    `${process.env.APP_URL ?? "http://localhost:3000"}/api/bank-link/callback`,
+    `${process.env.APP_URL ?? "http://localhost:3000"}/callback`,
 };
