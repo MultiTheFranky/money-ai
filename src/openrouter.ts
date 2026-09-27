@@ -4,16 +4,19 @@ import { SimplifiedTransaction } from "./types";
 
 /**
  * Envía las transacciones simplificadas a OpenRouter y devuelve el análisis
- * del asesor financiero en formato Markdown.
+ * del asesor financiero en formato Markdown. `extraContext` permite adjuntar
+ * un resumen agregado (p. ej. procedente del índice RAG) antes del detalle.
  */
 export async function analyzeTransactionsWithAI(
-  transactions: SimplifiedTransaction[]
+  transactions: SimplifiedTransaction[],
+  extraContext?: string
 ): Promise<string> {
   if (!config.openRouterApiKey) {
     throw new Error("Falta configurar la variable de entorno OPENROUTER_API_KEY");
   }
 
-  const userMessage = `Estos son mis movimientos bancarios recientes (JSON):\n\n${JSON.stringify(
+  const contextBlock = extraContext ? `${extraContext}\n\n` : "";
+  const userMessage = `${contextBlock}Estos son los movimientos bancarios más relevantes (JSON):\n\n${JSON.stringify(
     transactions,
     null,
     2

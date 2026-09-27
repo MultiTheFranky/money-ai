@@ -540,7 +540,7 @@
         return;
       }
 
-      transactionsStatus.textContent = "";
+      transactionsStatus.textContent = `${transactions.length} movimientos (últimos 6 meses), indexados en el RAG.`;
       transactionsTableWrapper.innerHTML = buildTransactionsTable(transactions);
     } catch (error) {
       transactionsStatus.textContent = error.message;

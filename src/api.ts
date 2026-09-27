@@ -10,7 +10,6 @@ import {
   TransactionsResponse,
 } from "./types";
 
-const DEFAULT_LOOKBACK_DAYS = 7;
 // Máxima validez del consentimiento solicitado al ASPSP (90 días)
 const CONSENT_VALIDITY_MS = 90 * 24 * 60 * 60 * 1000;
 
@@ -108,7 +107,7 @@ export async function getTransactions(
 ): Promise<RawTransaction[]> {
   try {
     const headers = await buildAuthHeaders();
-    const fromDate = dateFrom ?? dateDaysAgo(DEFAULT_LOOKBACK_DAYS);
+    const fromDate = dateFrom ?? dateDaysAgo(config.defaultLookbackDays);
 
     const response = await axios.get<TransactionsResponse>(
       `${config.apiBaseUrl}/accounts/${accountId}/transactions`,

@@ -15,15 +15,23 @@ import { config } from "./config";
 import { requireAuth } from "./middleware/requireAuth";
 import { analyzeTransactionsWithAI } from "./openrouter";
 import { parseTransactionsForAI } from "./parser";
+import { indexTransactions, queryRag, summarizeTransactions } from "./rag";
 import { createSessionToken, validateCredentials } from "./sessionAuth";
 import { SimplifiedTransaction } from "./types";
+
+// Consulta fija usada para recuperar del RAG los movimientos más relevantes para el análisis
+const RAG_ANALYSIS_QUERY =
+  "gastos elevados, movimientos inusuales o recurrentes y principales categorías de gasto";
 
 const app = express();
 
 app.use(express.json());
 app.use(express.static(path.join(__dirname, "..", "public")));
 
-/** Recorre todas las cuentas vinculadas y devuelve sus movimientos ya simplificados */
+/**
+ * Recorre todas las cuentas vinculadas, devuelve sus movimientos ya simplificados
+ * (por defecto, los últimos 6 meses) y los indexa en el RAG local para su uso posterior.
+ */
 async function collectAllTransactions(): Promise<SimplifiedTransaction[]> {
   const session = requireLinkedSession();
   const allTransactions: SimplifiedTransaction[] = [];
@@ -33,6 +41,7 @@ async function collectAllTransactions(): Promise<SimplifiedTransaction[]> {
     allTransactions.push(...parseTransactionsForAI(rawTransactions));
   }
 
+  await indexTransactions(allTransactions);
   return allTransactions;
 }
 
@@ -131,7 +140,7 @@ app.get("/callback", async (req: Request, res: Response) => {
 app.get("/api/transactions", requireAuth, async (_req: Request, res: Response) => {
   try {
     const transactions = await collectAllTransactions();
-    res.json({ transactions });
+    res.json({ transactions, ragIndexed: transactions.length });
   } catch (error) {
     respondWithError(res, error);
   }
@@ -140,7 +149,10 @@ app.get("/api/transactions", requireAuth, async (_req: Request, res: Response) =
 app.post("/api/analyze", requireAuth, async (_req: Request, res: Response) => {
   try {
     const transactions = await collectAllTransactions();
-    const analysis = await analyzeTransactionsWithAI(transactions);
+    const summary = summarizeTransactions(transactions);
+    const relevant = await queryRag(RAG_ANALYSIS_QUERY, config.ragTopK);
+    const sample = relevant.length > 0 ? relevant.map((entry) => entry.transaction) : transactions;
+    const analysis = await analyzeTransactionsWithAI(sample, summary);
     res.json({ analysis });
   } catch (error) {
     respondWithError(res, error);

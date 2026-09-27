@@ -15,9 +15,13 @@ export interface AppConfig {
   openRouterUrl: string;
   openRouterModel: string;
   openRouterSystemPrompt: string;
+  openRouterEmbeddingsUrl: string;
+  openRouterEmbeddingModel: string;
   appUrl: string;
   appName: string;
   enableBankingRedirectUrl: string;
+  defaultLookbackDays: number;
+  ragTopK: number;
 }
 
 function requireEnv(name: string): string {
@@ -49,6 +53,8 @@ export const config: AppConfig = {
   openRouterUrl: process.env.OPENROUTER_URL ?? "https://openrouter.ai/api/v1/chat/completions",
   openRouterModel: process.env.OPENROUTER_MODEL ?? "meta-llama/llama-3.1-8b-instruct",
   openRouterSystemPrompt: process.env.OPENROUTER_SYSTEM_PROMPT ?? DEFAULT_OPENROUTER_SYSTEM_PROMPT,
+  openRouterEmbeddingsUrl: process.env.OPENROUTER_EMBEDDINGS_URL ?? "https://openrouter.ai/api/v1/embeddings",
+  openRouterEmbeddingModel: process.env.OPENROUTER_EMBEDDING_MODEL ?? "openai/text-embedding-3-small",
   appUrl: process.env.APP_URL ?? "http://localhost:3000",
   appName: process.env.APP_NAME ?? "Money AI",
   // URL registrada en Enable Banking a la que redirige tras la autorización del usuario
@@ -56,4 +62,8 @@ export const config: AppConfig = {
   enableBankingRedirectUrl:
     process.env.ENABLEBANKING_REDIRECT_URL ??
     `${process.env.APP_URL ?? "http://localhost:3000"}/callback`,
+  // Ventana de movimientos a recuperar por defecto (6 meses)
+  defaultLookbackDays: Number(process.env.DEFAULT_LOOKBACK_DAYS ?? 180),
+  // Nº de movimientos más relevantes que se recuperan del RAG para el análisis con IA
+  ragTopK: Number(process.env.RAG_TOP_K ?? 40),
 };
