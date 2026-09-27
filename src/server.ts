@@ -1,7 +1,7 @@
 import crypto from "crypto";
 import express, { Request, Response } from "express";
 import path from "path";
-import { completeBankAuthorization, getAspsps, getTransactions, startBankAuthorization } from "./api";
+import { completeBankAuthorization, getAspsps, getTransactions, startBankAuthorization, AspspRateLimitError } from "./api";
 import {
   BankNotLinkedError,
   clearLinkedSession,
@@ -18,7 +18,7 @@ import { analyzeTransactionsWithAI } from "./openrouter";
 import { parseTransactionsForAI, resolveAccountMeta } from "./parser";
 import { indexTransactions, queryRag, summarizeTransactions } from "./rag";
 import { createSessionToken, validateCredentials } from "./sessionAuth";
-import { getCachedTransactions, setCachedTransactions } from "./transactionsCache";
+import { getCachedTransactions, getRateLimitCooldownMs, setCachedTransactions, setRateLimited } from "./transactionsCache";
 import { SimplifiedTransaction } from "./types";
 
 // Consulta fija usada para recuperar del RAG los movimientos más relevantes para el análisis
@@ -85,6 +85,26 @@ async function collectAllTransactions(): Promise<CollectedTransactions> {
       continue;
     }
 
+    const cooldownMs = getRateLimitCooldownMs(account.uid);
+    if (cooldownMs !== null) {
+      const remainingMin = Math.ceil(cooldownMs / 60000);
+      logger.warn(
+        "server",
+        `Cuenta ${account.uid}: en cooldown por rate limit (quedan ~${remainingMin} min), se omite la llamada al banco`
+      );
+      if (cached) {
+        allTransactions.push(...parseTransactionsForAI(cached.transactions, meta));
+      }
+      accountErrors.push({
+        accountId: account.uid,
+        accountName: meta.accountName ?? account.uid,
+        message: cached
+          ? `El banco limitó los accesos a esta cuenta; se muestran datos en caché de ${cached.fetchedAt}. Podrás reintentar en ~${remainingMin} min.`
+          : `El banco ha limitado los accesos a esta cuenta. Podrás reintentar en ~${remainingMin} min.`,
+      });
+      continue;
+    }
+
     try {
       const rawTransactions = await getTransactions(account.uid);
       setCachedTransactions(account.uid, rawTransactions);
@@ -94,6 +114,10 @@ async function collectAllTransactions(): Promise<CollectedTransactions> {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       logger.error("server", `Falló la cuenta ${account.uid} (${meta.accountName}): ${message}`);
+
+      if (error instanceof AspspRateLimitError) {
+        setRateLimited(account.uid, config.rateLimitCooldownMinutes * 60 * 1000);
+      }
 
       if (cached) {
         const simplified = parseTransactionsForAI(cached.transactions, meta);

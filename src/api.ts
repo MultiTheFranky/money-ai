@@ -14,6 +14,14 @@ import {
 // Máxima validez del consentimiento solicitado al ASPSP (90 días)
 const CONSENT_VALIDITY_MS = 90 * 24 * 60 * 60 * 1000;
 
+/** Se lanza cuando el ASPSP responde 429 ASPSP_RATE_LIMIT_EXCEEDED (límite de accesos del consentimiento) */
+export class AspspRateLimitError extends Error {
+  constructor(accountId: string, detail: string) {
+    super(`El banco ha limitado los accesos a la cuenta ${accountId}: ${detail}`);
+    this.name = "AspspRateLimitError";
+  }
+}
+
 /** Construye los headers de autorización necesarios para llamar a la API */
 async function buildAuthHeaders(): Promise<Record<string, string>> {
   const token = await generateToken();
@@ -162,6 +170,10 @@ export async function getTransactions(
       return transactions;
     } catch (error) {
       lastError = error;
+      if (isAspspRateLimitError(error)) {
+        logger.error("api", `Cuenta ${accountId}: rate limit del ASPSP: ${describeAxiosError(error)}`);
+        throw new AspspRateLimitError(accountId, describeAxiosError(error));
+      }
       if (!isWrongTransactionsPeriodError(error)) {
         logger.error("api", `Cuenta ${accountId}: error no recuperable: ${describeAxiosError(error)}`);
         throw new Error(
@@ -199,6 +211,14 @@ function isWrongTransactionsPeriodError(error: unknown): boolean {
   }
   const data = error.response?.data as { error?: string } | undefined;
   return data?.error === "WRONG_TRANSACTIONS_PERIOD";
+}
+
+function isAspspRateLimitError(error: unknown): boolean {
+  if (!axios.isAxiosError(error) || error.response?.status !== 429) {
+    return false;
+  }
+  const data = error.response?.data as { error?: string } | undefined;
+  return data?.error === "ASPSP_RATE_LIMIT_EXCEEDED";
 }
 
 /** Extrae un mensaje de error legible a partir de un error de axios o genérico */

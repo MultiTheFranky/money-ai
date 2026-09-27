@@ -24,6 +24,7 @@ export interface AppConfig {
   defaultLookbackDays: number;
   ragTopK: number;
   transactionsCacheTtlMinutes: number;
+  rateLimitCooldownMinutes: number;
 }
 
 function requireEnv(name: string): string {
@@ -73,6 +74,8 @@ export const config: AppConfig = {
   // Minutos que se reutilizan los movimientos ya obtenidos antes de volver a pedirlos al banco;
   // evita agotar el número de accesos permitidos por el consentimiento PSD2 (ASPSP_RATE_LIMIT_EXCEEDED)
   transactionsCacheTtlMinutes: Number(process.env.TRANSACTIONS_CACHE_TTL_MINUTES ?? 15),
+  // Minutos de espera antes de reintentar una cuenta tras un 429 ASPSP_RATE_LIMIT_EXCEEDED
+  rateLimitCooldownMinutes: Number(process.env.RATE_LIMIT_COOLDOWN_MINUTES ?? 60),
 };
 
 // Resumen de configuración sin secretos, útil para depurar qué variables de entorno se han cargado
@@ -84,6 +87,7 @@ logger.info("config", "Configuración cargada", {
   defaultLookbackDays: config.defaultLookbackDays,
   ragTopK: config.ragTopK,
   transactionsCacheTtlMinutes: config.transactionsCacheTtlMinutes,
+  rateLimitCooldownMinutes: config.rateLimitCooldownMinutes,
   openRouterUrl: config.openRouterUrl,
   openRouterModel: config.openRouterModel,
   openRouterEmbeddingModel: config.openRouterEmbeddingModel,
