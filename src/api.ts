@@ -99,34 +99,56 @@ export async function completeBankAuthorization(code: string): Promise<Authorize
 
 /**
  * Obtiene las transacciones de una cuenta desde `dateFrom` (por defecto,
- * los últimos 7 días) hasta la fecha actual.
+ * según config.defaultLookbackDays) hasta la fecha actual.
+ *
+ * Usa la estrategia "longest" para que Enable Banking negocie con el ASPSP el mayor
+ * periodo disponible sin exceder lo solicitado. Si aun así el banco rechaza el rango
+ * (422 WRONG_TRANSACTIONS_PERIOD, algo común según el ASPSP y el tipo de cuenta), se
+ * reintenta sin restricciones de fecha para obtener el periodo por defecto del banco.
  */
 export async function getTransactions(
   accountId: string,
   dateFrom?: string
 ): Promise<RawTransaction[]> {
+  const headers = await buildAuthHeaders();
+  const fromDate = dateFrom ?? dateDaysAgo(config.defaultLookbackDays);
+
   try {
-    const headers = await buildAuthHeaders();
-    const fromDate = dateFrom ?? dateDaysAgo(config.defaultLookbackDays);
-
-    const response = await axios.get<TransactionsResponse>(
-      `${config.apiBaseUrl}/accounts/${accountId}/transactions`,
-      {
-        headers,
-        params: {
-          date_from: fromDate,
-        },
-      }
-    );
-
-    return response.data.transactions;
+    return await fetchTransactionsPage(accountId, headers, { date_from: fromDate, strategy: "longest" });
   } catch (error) {
+    if (isWrongTransactionsPeriodError(error)) {
+      try {
+        return await fetchTransactionsPage(accountId, headers, {});
+      } catch (fallbackError) {
+        throw new Error(
+          `Error obteniendo transacciones de la cuenta ${accountId}: ${describeAxiosError(fallbackError)}`
+        );
+      }
+    }
     throw new Error(
-      `Error obteniendo transacciones de la cuenta ${accountId}: ${describeAxiosError(
-        error
-      )}`
+      `Error obteniendo transacciones de la cuenta ${accountId}: ${describeAxiosError(error)}`
     );
   }
+}
+
+async function fetchTransactionsPage(
+  accountId: string,
+  headers: Record<string, string>,
+  params: Record<string, string>
+): Promise<RawTransaction[]> {
+  const response = await axios.get<TransactionsResponse>(
+    `${config.apiBaseUrl}/accounts/${accountId}/transactions`,
+    { headers, params }
+  );
+  return response.data.transactions;
+}
+
+function isWrongTransactionsPeriodError(error: unknown): boolean {
+  if (!axios.isAxiosError(error) || error.response?.status !== 422) {
+    return false;
+  }
+  const data = error.response?.data as { error?: string } | undefined;
+  return data?.error === "WRONG_TRANSACTIONS_PERIOD";
 }
 
 /** Extrae un mensaje de error legible a partir de un error de axios o genérico */

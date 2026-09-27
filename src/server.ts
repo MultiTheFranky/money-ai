@@ -31,14 +31,22 @@ app.use(express.static(path.join(__dirname, "..", "public")));
 /**
  * Recorre todas las cuentas vinculadas, devuelve sus movimientos ya simplificados
  * (por defecto, los últimos 6 meses) y los indexa en el RAG local para su uso posterior.
+ * Si una cuenta falla (p. ej. el ASPSP rechaza el periodo solicitado para la tarjeta),
+ * se omite esa cuenta y se continúa con el resto en lugar de fallar por completo.
  */
 async function collectAllTransactions(): Promise<SimplifiedTransaction[]> {
   const session = requireLinkedSession();
   const allTransactions: SimplifiedTransaction[] = [];
 
   for (const account of session.accounts) {
-    const rawTransactions = await getTransactions(account.uid);
-    allTransactions.push(...parseTransactionsForAI(rawTransactions, resolveAccountMeta(account)));
+    try {
+      const rawTransactions = await getTransactions(account.uid);
+      allTransactions.push(...parseTransactionsForAI(rawTransactions, resolveAccountMeta(account)));
+    } catch (error) {
+      console.error(
+        `Se omite la cuenta ${account.uid}: ${error instanceof Error ? error.message : error}`
+      );
+    }
   }
 
   await indexTransactions(allTransactions);
