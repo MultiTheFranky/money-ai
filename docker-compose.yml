@@ -1,0 +1,25 @@
+services:
+  money-ai:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: money-ai:latest
+    container_name: money-ai
+    restart: unless-stopped
+    ports:
+      # Usa el PORT de tu .env (docker compose lo interpola automaticamente); 3000 por defecto
+      - "${PORT:-3000}:${PORT:-3000}"
+    env_file:
+      - .env
+    environment:
+      # KEY_PATH debe apuntar a la ruta montada dentro del contenedor (ver volumes)
+      - KEY_PATH=/app/keys/private_key.pem
+    volumes:
+      # Monta tu clave privada RSA en modo solo lectura; nunca se copia a la imagen
+      - ./keys:/app/keys:ro
+    networks:
+      - money-ai-net
+
+networks:
+  money-ai-net:
+    driver: bridge

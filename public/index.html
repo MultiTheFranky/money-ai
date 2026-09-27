@@ -1,0 +1,422 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Money AI · Panel financiero</title>
+<style>
+  :root {
+    --bg: #0f1117;
+    --panel: #171a24;
+    --border: #2a2f3d;
+    --text: #e6e8ef;
+    --muted: #9aa0ae;
+    --accent: #6c5ce7;
+    --accent-hover: #5a4bd1;
+    --positive: #2ecc71;
+    --negative: #ff6b6b;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    background: var(--bg);
+    color: var(--text);
+    font-family: "Segoe UI", Roboto, Arial, sans-serif;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+  }
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 32px;
+    width: 100%;
+    max-width: 420px;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+  }
+  .card h1 {
+    margin: 0 0 6px;
+    font-size: 22px;
+  }
+  .card p.subtitle {
+    margin: 0 0 24px;
+    color: var(--muted);
+    font-size: 14px;
+  }
+  label {
+    display: block;
+    font-size: 13px;
+    color: var(--muted);
+    margin-bottom: 6px;
+  }
+  input[type="text"], input[type="password"] {
+    width: 100%;
+    padding: 10px 12px;
+    margin-bottom: 16px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: #0f1117;
+    color: var(--text);
+    font-size: 14px;
+  }
+  button {
+    cursor: pointer;
+    border: none;
+    border-radius: 8px;
+    font-weight: 600;
+    font-size: 14px;
+    transition: background 0.15s ease;
+  }
+  .btn-primary {
+    width: 100%;
+    padding: 12px;
+    background: var(--accent);
+    color: white;
+  }
+  .btn-primary:hover { background: var(--accent-hover); }
+  .error-msg {
+    color: var(--negative);
+    font-size: 13px;
+    margin: -8px 0 16px;
+    min-height: 16px;
+  }
+
+  #dashboard {
+    display: none;
+    width: 100%;
+    max-width: 900px;
+  }
+  .dashboard-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 20px;
+  }
+  .dashboard-header h1 { font-size: 20px; margin: 0; }
+  .btn-logout {
+    background: transparent;
+    color: var(--muted);
+    border: 1px solid var(--border);
+    padding: 8px 14px;
+  }
+  .btn-logout:hover { color: var(--text); border-color: var(--muted); }
+
+  .panel-section {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 24px;
+    margin-bottom: 20px;
+  }
+  .actions-row {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin-bottom: 16px;
+  }
+  .btn-load {
+    background: #2b2f3d;
+    color: var(--text);
+    padding: 10px 18px;
+    border: 1px solid var(--border);
+  }
+  .btn-load:hover { background: #363c4f; }
+
+  .btn-ai-giant {
+    display: block;
+    width: 100%;
+    padding: 22px;
+    font-size: 18px;
+    letter-spacing: 0.3px;
+    background: linear-gradient(135deg, #6c5ce7, #a55eea);
+    color: white;
+    border-radius: 12px;
+    box-shadow: 0 8px 24px rgba(108, 92, 231, 0.35);
+  }
+  .btn-ai-giant:hover { filter: brightness(1.08); }
+  .btn-ai-giant:disabled { opacity: 0.6; cursor: not-allowed; }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 14px;
+  }
+  th, td {
+    text-align: left;
+    padding: 10px 8px;
+    border-bottom: 1px solid var(--border);
+  }
+  th { color: var(--muted); font-weight: 600; font-size: 12px; text-transform: uppercase; }
+  td.amount-positive { color: var(--positive); font-weight: 600; }
+  td.amount-negative { color: var(--negative); font-weight: 600; }
+  .empty-hint { color: var(--muted); font-size: 13px; }
+
+  #analysisContainer {
+    background: #12141c;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 20px;
+    margin-top: 20px;
+    line-height: 1.55;
+    font-size: 14px;
+  }
+  #analysisContainer h1, #analysisContainer h2, #analysisContainer h3 {
+    color: #b9a7ff;
+  }
+  #analysisContainer ul { padding-left: 20px; }
+  .loading-text { color: var(--muted); font-size: 13px; }
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+
+  <!-- LOGIN -->
+  <div class="card" id="loginCard">
+    <h1>Money AI</h1>
+    <p class="subtitle">Accede a tu panel de análisis financiero</p>
+    <form id="loginForm">
+      <label for="username">Usuario</label>
+      <input type="text" id="username" autocomplete="username" required />
+      <label for="password">Contraseña</label>
+      <input type="password" id="password" autocomplete="current-password" required />
+      <div class="error-msg" id="loginError"></div>
+      <button type="submit" class="btn-primary">Entrar</button>
+    </form>
+  </div>
+
+  <!-- DASHBOARD -->
+  <div id="dashboard">
+    <div class="dashboard-header">
+      <h1>Panel financiero</h1>
+      <button class="btn-logout" id="logoutBtn">Cerrar sesión</button>
+    </div>
+
+    <div class="panel-section">
+      <div class="actions-row">
+        <button class="btn-load" id="loadTransactionsBtn">Cargar Movimientos</button>
+      </div>
+      <div id="transactionsStatus" class="loading-text"></div>
+      <div id="transactionsTableWrapper"></div>
+    </div>
+
+    <div class="panel-section">
+      <button class="btn-ai-giant" id="analyzeBtn">🤖 Consultar IA</button>
+      <div id="analysisStatus" class="loading-text"></div>
+      <div id="analysisContainer" class="hidden"></div>
+    </div>
+  </div>
+
+<script>
+  const TOKEN_KEY = "moneyAiToken";
+
+  const loginCard = document.getElementById("loginCard");
+  const dashboard = document.getElementById("dashboard");
+  const loginForm = document.getElementById("loginForm");
+  const loginError = document.getElementById("loginError");
+  const logoutBtn = document.getElementById("logoutBtn");
+  const loadTransactionsBtn = document.getElementById("loadTransactionsBtn");
+  const transactionsStatus = document.getElementById("transactionsStatus");
+  const transactionsTableWrapper = document.getElementById("transactionsTableWrapper");
+  const analyzeBtn = document.getElementById("analyzeBtn");
+  const analysisStatus = document.getElementById("analysisStatus");
+  const analysisContainer = document.getElementById("analysisContainer");
+
+  function getToken() {
+    return sessionStorage.getItem(TOKEN_KEY);
+  }
+
+  function setToken(token) {
+    sessionStorage.setItem(TOKEN_KEY, token);
+  }
+
+  function clearToken() {
+    sessionStorage.removeItem(TOKEN_KEY);
+  }
+
+  function showDashboard() {
+    loginCard.style.display = "none";
+    dashboard.style.display = "block";
+  }
+
+  function showLogin() {
+    dashboard.style.display = "none";
+    loginCard.style.display = "block";
+  }
+
+  // Escapa HTML para evitar inyección antes de aplicar el formato Markdown
+  function escapeHtml(text) {
+    return text
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
+  }
+
+  // Conversor de Markdown a HTML minimalista y seguro (sin dependencias externas)
+  function renderMarkdown(rawMarkdown) {
+    const escaped = escapeHtml(rawMarkdown);
+    const lines = escaped.split("\n");
+    let html = "";
+    let inList = false;
+
+    for (const line of lines) {
+      const trimmed = line.trim();
+
+      if (/^-\s+/.test(trimmed)) {
+        if (!inList) { html += "<ul>"; inList = true; }
+        html += `<li>${inlineMarkdown(trimmed.replace(/^-\s+/, ""))}</li>`;
+        continue;
+      }
+      if (inList) { html += "</ul>"; inList = false; }
+
+      if (/^###\s+/.test(trimmed)) {
+        html += `<h3>${inlineMarkdown(trimmed.replace(/^###\s+/, ""))}</h3>`;
+      } else if (/^##\s+/.test(trimmed)) {
+        html += `<h2>${inlineMarkdown(trimmed.replace(/^##\s+/, ""))}</h2>`;
+      } else if (/^#\s+/.test(trimmed)) {
+        html += `<h1>${inlineMarkdown(trimmed.replace(/^#\s+/, ""))}</h1>`;
+      } else if (trimmed.length === 0) {
+        html += "<br/>";
+      } else {
+        html += `<p>${inlineMarkdown(trimmed)}</p>`;
+      }
+    }
+
+    if (inList) { html += "</ul>"; }
+    return html;
+  }
+
+  function inlineMarkdown(text) {
+    return text
+      .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
+      .replace(/\*(.+?)\*/g, "<em>$1</em>");
+  }
+
+  async function apiFetch(url, options = {}) {
+    const token = getToken();
+    const headers = Object.assign({}, options.headers, {
+      Authorization: `Bearer ${token}`,
+    });
+    const response = await fetch(url, Object.assign({}, options, { headers }));
+
+    if (response.status === 401) {
+      clearToken();
+      showLogin();
+      throw new Error("Sesión expirada, vuelve a iniciar sesión");
+    }
+
+    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(data.error || "Error inesperado en la petición");
+    }
+    return data;
+  }
+
+  loginForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    loginError.textContent = "";
+
+    const username = document.getElementById("username").value;
+    const password = document.getElementById("password").value;
+
+    try {
+      const response = await fetch("/api/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username, password }),
+      });
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || "No se pudo iniciar sesión");
+      }
+
+      setToken(data.token);
+      showDashboard();
+    } catch (error) {
+      loginError.textContent = error.message;
+    }
+  });
+
+  logoutBtn.addEventListener("click", () => {
+    clearToken();
+    transactionsTableWrapper.innerHTML = "";
+    analysisContainer.classList.add("hidden");
+    analysisContainer.innerHTML = "";
+    showLogin();
+  });
+
+  loadTransactionsBtn.addEventListener("click", async () => {
+    transactionsStatus.textContent = "Cargando movimientos...";
+    transactionsTableWrapper.innerHTML = "";
+
+    try {
+      const data = await apiFetch("/api/transactions");
+      const transactions = data.transactions || [];
+
+      if (transactions.length === 0) {
+        transactionsStatus.textContent = "";
+        transactionsTableWrapper.innerHTML = '<p class="empty-hint">No se encontraron movimientos.</p>';
+        return;
+      }
+
+      transactionsStatus.textContent = "";
+      transactionsTableWrapper.innerHTML = buildTransactionsTable(transactions);
+    } catch (error) {
+      transactionsStatus.textContent = error.message;
+    }
+  });
+
+  function buildTransactionsTable(transactions) {
+    const rows = transactions
+      .map((tx) => {
+        const amountClass = tx.amount < 0 ? "amount-negative" : "amount-positive";
+        const amountText = `${tx.amount > 0 ? "+" : ""}${tx.amount.toFixed(2)}`;
+        return `
+          <tr>
+            <td>${escapeHtml(tx.date || "")}</td>
+            <td class="${amountClass}">${escapeHtml(amountText)}</td>
+            <td>${escapeHtml(tx.currency || "")}</td>
+            <td>${escapeHtml(tx.concept || "")}</td>
+          </tr>`;
+      })
+      .join("");
+
+    return `
+      <table>
+        <thead>
+          <tr><th>Fecha</th><th>Importe</th><th>Divisa</th><th>Concepto</th></tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>`;
+  }
+
+  analyzeBtn.addEventListener("click", async () => {
+    analyzeBtn.disabled = true;
+    analysisStatus.textContent = "Consultando a la IA, esto puede tardar unos segundos...";
+    analysisContainer.classList.add("hidden");
+    analysisContainer.innerHTML = "";
+
+    try {
+      const data = await apiFetch("/api/analyze", { method: "POST" });
+      analysisStatus.textContent = "";
+      analysisContainer.innerHTML = renderMarkdown(data.analysis || "");
+      analysisContainer.classList.remove("hidden");
+    } catch (error) {
+      analysisStatus.textContent = error.message;
+    } finally {
+      analyzeBtn.disabled = false;
+    }
+  });
+
+  // Si ya existe un token de sesión guardado, se muestra el panel directamente
+  if (getToken()) {
+    showDashboard();
+  }
+</script>
+</body>
+</html>

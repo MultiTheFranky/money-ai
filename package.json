@@ -1,0 +1,33 @@
+{
+  "name": "money-ai",
+  "version": "1.0.0",
+  "description": "Aplicación web Node.js/TypeScript que conecta con Enable Banking y analiza los movimientos bancarios con IA vía OpenRouter",
+  "main": "dist/server.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/server.js",
+    "dev": "ts-node src/server.ts",
+    "cli": "ts-node src/index.ts"
+  },
+  "keywords": [
+    "enable-banking",
+    "open-banking",
+    "psd2",
+    "jwt",
+    "openrouter"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "axios": "^1.7.9",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "jsonwebtoken": "^9.0.2"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/jsonwebtoken": "^9.0.7",
+    "@types/node": "^22.10.5",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.7.2"
+  }
+}
