@@ -320,6 +320,15 @@
   const linkedBankName = document.getElementById("linkedBankName");
   const unlinkBankBtn = document.getElementById("unlinkBankBtn");
 
+  // Logger de consola con prefijo y timestamp, para depurar el flujo completo desde el navegador
+  function clog(scope, message, meta) {
+    const prefix = `[${new Date().toISOString()}] [${scope}]`;
+    if (meta !== undefined) console.log(prefix, message, meta);
+    else console.log(prefix, message);
+  }
+
+  clog("boot", `Página cargada. Token de sesión en sessionStorage: ${getToken() ? "presente" : "ausente"}`);
+
   function getToken() {
     return sessionStorage.getItem(TOKEN_KEY);
   }
@@ -333,6 +342,7 @@
   }
 
   function showDashboard() {
+    clog("ui", "Mostrando dashboard");
     loginCard.style.display = "none";
     dashboard.style.display = "block";
     handleBankLinkRedirectParams();
@@ -340,6 +350,7 @@
   }
 
   function showLogin() {
+    clog("ui", "Mostrando pantalla de login");
     dashboard.style.display = "none";
     loginCard.style.display = "block";
   }
@@ -399,15 +410,21 @@
     const headers = Object.assign({}, options.headers, {
       Authorization: `Bearer ${token}`,
     });
+    const method = options.method || "GET";
+    clog("api", `--> ${method} ${url}`);
+    const start = performance.now();
     const response = await fetch(url, Object.assign({}, options, { headers }));
+    const durationMs = Math.round(performance.now() - start);
 
     if (response.status === 401) {
+      clog("api", `<-- ${method} ${url} 401 (${durationMs}ms): sesión expirada`);
       clearToken();
       showLogin();
       throw new Error("Sesión expirada, vuelve a iniciar sesión");
     }
 
     const data = await response.json();
+    clog("api", `<-- ${method} ${url} ${response.status} (${durationMs}ms)`, data);
     if (!response.ok) {
       const apiError = new Error(data.error || "Error inesperado en la petición");
       apiError.code = data.code;
@@ -423,23 +440,28 @@
   }
 
   async function refreshBankLinkStatus() {
+    clog("bankLink", "Consultando estado de vinculación...");
     try {
       const data = await apiFetch("/api/bank-link/status");
       if (data.linked) {
+        clog("bankLink", `Banco vinculado: ${data.aspsp.name} (${data.aspsp.country})`);
         bankLinkPanel.classList.add("hidden");
         linkedBankBar.classList.remove("hidden");
         linkedBankName.textContent = `${data.aspsp.name} (${data.aspsp.country})`;
       } else {
+        clog("bankLink", "Sin banco vinculado, mostrando panel de vinculación");
         bankLinkPanel.classList.remove("hidden");
         linkedBankBar.classList.add("hidden");
       }
     } catch (error) {
+      clog("bankLink", `Error consultando estado: ${error.message}`);
       bankLinkStatus.textContent = error.message;
     }
   }
 
   searchAspspsBtn.addEventListener("click", async () => {
     const country = aspspCountryInput.value.trim().toUpperCase();
+    clog("bankLink", `Buscando bancos en país=${country}`);
     bankLinkStatus.textContent = "Buscando bancos...";
     aspspSelect.innerHTML = '<option value="">-- Busca tu banco --</option>';
     connectBankBtn.disabled = true;
@@ -447,6 +469,7 @@
     try {
       const data = await apiFetch(`/api/aspsps?country=${encodeURIComponent(country)}`);
       const aspsps = data.aspsps || [];
+      clog("bankLink", `${aspsps.length} bancos encontrados para ${country}`);
 
       if (aspsps.length === 0) {
         bankLinkStatus.textContent = "No se encontraron bancos para ese país.";
@@ -461,6 +484,7 @@
         aspspSelect.appendChild(option);
       }
     } catch (error) {
+      clog("bankLink", `Error buscando bancos: ${error.message}`);
       bankLinkStatus.textContent = error.message;
     }
   });
@@ -472,6 +496,7 @@
   connectBankBtn.addEventListener("click", async () => {
     if (!aspspSelect.value) return;
     const { aspspName, aspspCountry } = JSON.parse(aspspSelect.value);
+    clog("bankLink", `Conectando con ${aspspName} (${aspspCountry})...`);
 
     connectBankBtn.disabled = true;
     bankLinkStatus.textContent = "Redirigiendo a tu banco...";
@@ -482,6 +507,7 @@
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ aspspName, aspspCountry }),
       });
+      clog("bankLink", `Redirigiendo el navegador a ${data.url}`);
       window.location.href = data.url;
     } catch (error) {
       bankLinkStatus.textContent = error.message;
@@ -490,6 +516,7 @@
   });
 
   unlinkBankBtn.addEventListener("click", async () => {
+    clog("bankLink", "Desvinculando banco...");
     try {
       await apiFetch("/api/bank-link/unlink", { method: "POST" });
       loadedTransactions = [];
@@ -501,6 +528,7 @@
       analysisContainer.innerHTML = "";
       await refreshBankLinkStatus();
     } catch (error) {
+      clog("bankLink", `Error desvinculando: ${error.message}`);
       bankLinkStatus.textContent = error.message;
     }
   });
@@ -509,8 +537,10 @@
   function handleBankLinkRedirectParams() {
     const params = new URLSearchParams(window.location.search);
     if (params.has("linked")) {
+      clog("bankLink", "Callback del banco: vinculación exitosa (?linked=1)");
       showBankLinkBanner("success", "¡Banco vinculado correctamente!");
     } else if (params.has("linkError")) {
+      clog("bankLink", `Callback del banco: error (?linkError=${params.get("linkError")})`);
       showBankLinkBanner("error", params.get("linkError"));
     }
     if (params.has("linked") || params.has("linkError")) {
@@ -524,6 +554,7 @@
 
     const username = document.getElementById("username").value;
     const password = document.getElementById("password").value;
+    clog("login", `Enviando login para usuario "${username}"...`);
 
     try {
       const response = await fetch("/api/login", {
@@ -537,14 +568,17 @@
         throw new Error(data.error || "No se pudo iniciar sesión");
       }
 
+      clog("login", "Login correcto, token de sesión guardado");
       setToken(data.token);
       showDashboard();
     } catch (error) {
+      clog("login", `Login fallido: ${error.message}`);
       loginError.textContent = error.message;
     }
   });
 
   logoutBtn.addEventListener("click", () => {
+    clog("login", "Cerrando sesión");
     clearToken();
     loadedTransactions = [];
     transactionsTableWrapper.innerHTML = "";
@@ -557,20 +591,30 @@
   });
 
   loadTransactionsBtn.addEventListener("click", async () => {
+    clog("transactions", "Cargando movimientos...");
     transactionsStatus.textContent = "Cargando movimientos...";
     transactionsTableWrapper.innerHTML = "";
 
     try {
       const data = await apiFetch("/api/transactions");
       const transactions = data.transactions || [];
+      const accountErrors = data.accountErrors || [];
+      clog("transactions", `${transactions.length} movimientos recibidos, ${accountErrors.length} cuenta(s) con error`, { accountErrors });
+      const errorsNote = accountErrors.length > 0
+        ? ` ⚠️ No se pudieron cargar ${accountErrors.length} cuenta(s): ${accountErrors
+            .map((e) => `${e.accountName} (${e.message})`)
+            .join("; ")}`
+        : "";
 
       if (transactions.length === 0) {
-        transactionsStatus.textContent = "";
+        transactionsStatus.textContent = errorsNote
+          ? errorsNote.trim()
+          : "";
         transactionsTableWrapper.innerHTML = '<p class="empty-hint">No se encontraron movimientos.</p>';
         return;
       }
 
-      transactionsStatus.textContent = `${transactions.length} movimientos (últimos 6 meses), indexados en el RAG.`;
+      transactionsStatus.textContent = `${transactions.length} movimientos (últimos 6 meses), indexados en el RAG.${errorsNote}`;
       loadedTransactions = transactions;
       currentFilter = "all";
       filterAllBtn.classList.remove("hidden");
@@ -578,6 +622,7 @@
       filterAccountBtn.classList.remove("hidden");
       renderTransactions();
     } catch (error) {
+      clog("transactions", `Error cargando movimientos: ${error.message} (code=${error.code ?? "-"})`);
       transactionsStatus.textContent = error.message;
       if (error.code === "BANK_NOT_LINKED") {
         bankLinkPanel.classList.remove("hidden");
@@ -586,6 +631,7 @@
   });
 
   function setFilter(filter) {
+    clog("transactions", `Filtro cambiado a: ${filter}`);
     currentFilter = filter;
     [filterAllBtn, filterCardBtn, filterAccountBtn].forEach((btn) => btn.classList.remove("active"));
     if (filter === "card") filterCardBtn.classList.add("active");
@@ -657,6 +703,7 @@
   }
 
   analyzeBtn.addEventListener("click", async () => {
+    clog("analyze", "Consultando IA...");
     analyzeBtn.disabled = true;
     analysisStatus.textContent = "Consultando a la IA, esto puede tardar unos segundos...";
     analysisContainer.classList.add("hidden");
@@ -664,10 +711,12 @@
 
     try {
       const data = await apiFetch("/api/analyze", { method: "POST" });
+      clog("analyze", `Análisis recibido (${(data.analysis || "").length} caracteres)`);
       analysisStatus.textContent = "";
       analysisContainer.innerHTML = renderMarkdown(data.analysis || "");
       analysisContainer.classList.remove("hidden");
     } catch (error) {
+      clog("analyze", `Error consultando IA: ${error.message} (code=${error.code ?? "-"})`);
       analysisStatus.textContent = error.message;
       if (error.code === "BANK_NOT_LINKED") {
         bankLinkPanel.classList.remove("hidden");
@@ -679,6 +728,7 @@
 
   // Si ya existe un token de sesión guardado, se muestra el panel directamente
   if (getToken()) {
+    clog("boot", "Token existente encontrado, mostrando dashboard directamente");
     showDashboard();
   }
 </script>

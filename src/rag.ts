@@ -2,6 +2,7 @@ import axios from "axios";
 import fs from "fs";
 import path from "path";
 import { config } from "./config";
+import { logger } from "./logger";
 import { SimplifiedTransaction } from "./types";
 
 const DATA_DIR = path.join(__dirname, "..", "data");
@@ -33,9 +34,12 @@ async function embedTexts(texts: string[]): Promise<number[][]> {
   }
 
   const embeddings: number[][] = [];
+  const totalBatches = Math.ceil(texts.length / EMBEDDING_BATCH_SIZE);
+  logger.info("rag", `Generando embeddings para ${texts.length} textos en ${totalBatches} lote(s) (modelo=${config.openRouterEmbeddingModel})`);
 
   for (let i = 0; i < texts.length; i += EMBEDDING_BATCH_SIZE) {
     const batch = texts.slice(i, i + EMBEDDING_BATCH_SIZE);
+    const batchNumber = i / EMBEDDING_BATCH_SIZE + 1;
 
     try {
       const response = await axios.post(
@@ -54,11 +58,14 @@ async function embedTexts(texts: string[]): Promise<number[][]> {
       for (const item of response.data.data as { embedding: number[] }[]) {
         embeddings.push(item.embedding);
       }
+      logger.debug("rag", `Lote ${batchNumber}/${totalBatches}: ${batch.length} embeddings recibidos`);
     } catch (error) {
+      logger.error("rag", `Lote ${batchNumber}/${totalBatches} falló: ${describeError(error)}`);
       throw new Error(`Error generando embeddings en OpenRouter: ${describeError(error)}`);
     }
   }
 
+  logger.info("rag", `Embeddings generados: ${embeddings.length}/${texts.length}`);
   return embeddings;
 }
 
@@ -67,6 +74,7 @@ async function embedTexts(texts: string[]): Promise<number[][]> {
  * (sobrescribiendo el índice anterior), listos para búsquedas semánticas.
  */
 export async function indexTransactions(transactions: SimplifiedTransaction[]): Promise<number> {
+  logger.info("rag", `Indexando ${transactions.length} movimientos en el RAG local`);
   const texts = transactions.map(buildTransactionText);
   const embeddings = await embedTexts(texts);
 
@@ -78,6 +86,7 @@ export async function indexTransactions(transactions: SimplifiedTransaction[]): 
 
   fs.mkdirSync(DATA_DIR, { recursive: true });
   fs.writeFileSync(INDEX_FILE, JSON.stringify(entries), "utf8");
+  logger.info("rag", `Índice RAG guardado en ${INDEX_FILE} (${entries.length} entradas)`);
   return entries.length;
 }
 
@@ -106,18 +115,23 @@ function cosineSimilarity(a: number[], b: number[]): number {
 
 /** Devuelve los `topK` movimientos del índice RAG más relevantes semánticamente para `query` */
 export async function queryRag(query: string, topK: number): Promise<RagEntry[]> {
+  logger.info("rag", `Consultando el RAG: "${query}" (topK=${topK})`);
   const index = getRagIndex();
   if (index.length === 0) {
+    logger.warn("rag", "El índice RAG está vacío, no hay nada que consultar");
     return [];
   }
 
   const [queryEmbedding] = await embedTexts([query]);
 
-  return index
+  const results = index
     .map((entry) => ({ entry, score: cosineSimilarity(queryEmbedding, entry.embedding) }))
     .sort((a, b) => b.score - a.score)
     .slice(0, topK)
     .map((result) => result.entry);
+
+  logger.info("rag", `Consulta RAG resuelta: ${results.length} movimientos relevantes de ${index.length} indexados`);
+  return results;
 }
 
 /** Resumen agregado (ingresos/gastos por divisa) usado como contexto adicional para la IA */

@@ -1,6 +1,7 @@
 import * as fs from "fs/promises";
 import jwt from "jsonwebtoken";
 import { config } from "./config";
+import { logger } from "./logger";
 
 const TOKEN_TTL_SECONDS = 3600; // 1 hora
 
@@ -9,6 +10,7 @@ const TOKEN_TTL_SECONDS = 3600; // 1 hora
  * según la especificación de autenticación de Enable Banking.
  */
 export async function generateToken(): Promise<string> {
+  logger.debug("auth", `Generando JWT RS256 (kid=${config.clientId.slice(0, 8)}...) leyendo clave de ${config.keyPath}`);
   try {
     const privateKey = await fs.readFile(config.keyPath, "utf8");
 
@@ -29,12 +31,12 @@ export async function generateToken(): Promise<string> {
       },
     });
 
+    logger.debug("auth", `JWT generado correctamente, expira en ${TOKEN_TTL_SECONDS}s`);
     return token;
   } catch (error) {
-    throw new Error(
-      `Error generando el token JWT para Enable Banking: ${
-        error instanceof Error ? error.message : String(error)
-      }`
-    );
+    const message = error instanceof Error ? error.message : String(error);
+    logger.error("auth", `Fallo generando el JWT: ${message}`);
+    throw new Error(`Error generando el token JWT para Enable Banking: ${message}`);
   }
 }
+

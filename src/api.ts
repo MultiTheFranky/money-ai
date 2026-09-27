@@ -1,6 +1,7 @@
 import axios, { AxiosError } from "axios";
 import { generateToken } from "./auth";
 import { config } from "./config";
+import { logger } from "./logger";
 import {
   AspspsResponse,
   AuthorizeSessionResponse,
@@ -31,6 +32,7 @@ function dateDaysAgo(daysAgo: number): string {
 
 /** Obtiene la lista de bancos (ASPSPs) disponibles, opcionalmente filtrados por país */
 export async function getAspsps(country?: string): Promise<Aspsp[]> {
+  logger.info("api", `GET /aspsps (country=${country ?? "todos"})`);
   try {
     const headers = await buildAuthHeaders();
 
@@ -39,8 +41,10 @@ export async function getAspsps(country?: string): Promise<Aspsp[]> {
       params: country ? { country } : undefined,
     });
 
+    logger.info("api", `GET /aspsps -> ${response.data.aspsps.length} bancos encontrados`);
     return response.data.aspsps;
   } catch (error) {
+    logger.error("api", `GET /aspsps falló: ${describeAxiosError(error)}`);
     throw new Error(`Error obteniendo la lista de bancos: ${describeAxiosError(error)}`);
   }
 }
@@ -54,6 +58,7 @@ export async function startBankAuthorization(
   aspspCountry: string,
   state: string
 ): Promise<StartAuthorizationResponse> {
+  logger.info("api", `POST /auth (aspsp=${aspspName}/${aspspCountry}, redirect_url=${config.enableBankingRedirectUrl})`);
   try {
     const headers = await buildAuthHeaders();
     const validUntil = new Date(Date.now() + CONSENT_VALIDITY_MS).toISOString();
@@ -70,8 +75,10 @@ export async function startBankAuthorization(
       { headers }
     );
 
+    logger.info("api", `POST /auth -> authorization_id=${response.data.authorization_id}, url=${response.data.url}`);
     return response.data;
   } catch (error) {
+    logger.error("api", `POST /auth falló: ${describeAxiosError(error)}`);
     throw new Error(`Error iniciando la autorización bancaria: ${describeAxiosError(error)}`);
   }
 }
@@ -81,6 +88,7 @@ export async function startBankAuthorization(
  * sesión autorizada junto con la lista de cuentas accesibles.
  */
 export async function completeBankAuthorization(code: string): Promise<AuthorizeSessionResponse> {
+  logger.info("api", `POST /sessions (code recibido, longitud=${code.length})`);
   try {
     const headers = await buildAuthHeaders();
 
@@ -90,8 +98,13 @@ export async function completeBankAuthorization(code: string): Promise<Authorize
       { headers }
     );
 
+    logger.info(
+      "api",
+      `POST /sessions -> session_id=${response.data.session_id}, ${response.data.accounts.length} cuentas (${response.data.aspsp.name}/${response.data.aspsp.country})`
+    );
     return response.data;
   } catch (error) {
+    logger.error("api", `POST /sessions falló: ${describeAxiosError(error)}`);
     throw new Error(`Error completando la autorización bancaria: ${describeAxiosError(error)}`);
   }
 }
@@ -101,34 +114,71 @@ export async function completeBankAuthorization(code: string): Promise<Authorize
  * Obtiene las transacciones de una cuenta desde `dateFrom` (por defecto,
  * según config.defaultLookbackDays) hasta la fecha actual.
  *
- * Usa la estrategia "longest" para que Enable Banking negocie con el ASPSP el mayor
- * periodo disponible sin exceder lo solicitado. Si aun así el banco rechaza el rango
- * (422 WRONG_TRANSACTIONS_PERIOD, algo común según el ASPSP y el tipo de cuenta), se
- * reintenta sin restricciones de fecha para obtener el periodo por defecto del banco.
+ * Algunos ASPSP rechazan rangos amplios con 422 WRONG_TRANSACTIONS_PERIOD (varía según
+ * banco y tipo de cuenta, p. ej. tarjetas). En ese caso se reintenta con ventanas cada vez
+ * más cortas y, como último recurso, sin restricción de fecha (periodo por defecto del banco).
  */
 export async function getTransactions(
   accountId: string,
   dateFrom?: string
 ): Promise<RawTransaction[]> {
   const headers = await buildAuthHeaders();
-  const fromDate = dateFrom ?? dateDaysAgo(config.defaultLookbackDays);
+  const primaryFromDate = dateFrom ?? dateDaysAgo(config.defaultLookbackDays);
 
-  try {
-    return await fetchTransactionsPage(accountId, headers, { date_from: fromDate, strategy: "longest" });
-  } catch (error) {
-    if (isWrongTransactionsPeriodError(error)) {
-      try {
-        return await fetchTransactionsPage(accountId, headers, {});
-      } catch (fallbackError) {
+  // Solo se añaden ventanas de reintento estrictamente más cortas (fechas más recientes)
+  // que la solicitud inicial, para no repetir un rango igual o más amplio ya rechazado
+  const fallbackFromDates = [dateDaysAgo(90), dateDaysAgo(30)].filter(
+    (candidate) => candidate > primaryFromDate
+  );
+
+  const attempts: Record<string, string>[] = [
+    { date_from: primaryFromDate },
+    ...fallbackFromDates.map((date_from) => ({ date_from })),
+    {},
+  ];
+
+  logger.info(
+    "api",
+    `GET /accounts/${accountId}/transactions: ${attempts.length} ventana(s) a probar -> ${attempts
+      .map((p) => p.date_from ?? "sin fecha")
+      .join(" | ")}`
+  );
+
+  let lastError: unknown;
+
+  for (const [index, params] of attempts.entries()) {
+    logger.debug(
+      "api",
+      `Cuenta ${accountId}: intento ${index + 1}/${attempts.length} con date_from=${params.date_from ?? "(sin filtro)"}`
+    );
+    try {
+      const transactions = await fetchTransactionsPage(accountId, headers, params);
+      logger.info(
+        "api",
+        `Cuenta ${accountId}: ${transactions.length} movimientos obtenidos (intento ${index + 1}, date_from=${
+          params.date_from ?? "sin filtro"
+        })`
+      );
+      return transactions;
+    } catch (error) {
+      lastError = error;
+      if (!isWrongTransactionsPeriodError(error)) {
+        logger.error("api", `Cuenta ${accountId}: error no recuperable: ${describeAxiosError(error)}`);
         throw new Error(
-          `Error obteniendo transacciones de la cuenta ${accountId}: ${describeAxiosError(fallbackError)}`
+          `Error obteniendo transacciones de la cuenta ${accountId}: ${describeAxiosError(error)}`
         );
       }
+      logger.warn(
+        "api",
+        `Cuenta ${accountId}: WRONG_TRANSACTIONS_PERIOD con date_from=${params.date_from ?? "sin filtro"}, se prueba la siguiente ventana`
+      );
     }
-    throw new Error(
-      `Error obteniendo transacciones de la cuenta ${accountId}: ${describeAxiosError(error)}`
-    );
   }
+
+  logger.error("api", `Cuenta ${accountId}: se agotaron todas las ventanas de reintento`);
+  throw new Error(
+    `Error obteniendo transacciones de la cuenta ${accountId}: ${describeAxiosError(lastError)}`
+  );
 }
 
 async function fetchTransactionsPage(

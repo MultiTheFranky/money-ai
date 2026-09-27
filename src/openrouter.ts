@@ -1,5 +1,6 @@
 import axios from "axios";
 import { config } from "./config";
+import { logger } from "./logger";
 import { SimplifiedTransaction } from "./types";
 
 /**
@@ -12,6 +13,7 @@ export async function analyzeTransactionsWithAI(
   extraContext?: string
 ): Promise<string> {
   if (!config.openRouterApiKey) {
+    logger.error("openrouter", "Falta OPENROUTER_API_KEY, no se puede llamar a /chat/completions");
     throw new Error("Falta configurar la variable de entorno OPENROUTER_API_KEY");
   }
 
@@ -21,6 +23,11 @@ export async function analyzeTransactionsWithAI(
     null,
     2
   )}\n\nAnaliza mi gasto, avísame de excesos y dame recomendaciones concisas.`;
+
+  logger.info(
+    "openrouter",
+    `POST /chat/completions (modelo=${config.openRouterModel}, ${transactions.length} movimientos, ${userMessage.length} caracteres de prompt)`
+  );
 
   try {
     const response = await axios.post(
@@ -43,18 +50,24 @@ export async function analyzeTransactionsWithAI(
       }
     );
 
-
     const content = response.data?.choices?.[0]?.message?.content;
 
     if (!content) {
+      logger.error("openrouter", "La respuesta de /chat/completions no trae contenido", response.data);
       throw new Error("OpenRouter no devolvió contenido en la respuesta");
     }
 
+    logger.info(
+      "openrouter",
+      `POST /chat/completions -> respuesta recibida (${content.length} caracteres, usage=${JSON.stringify(response.data?.usage ?? {})})`
+    );
     return content as string;
   } catch (error) {
+    logger.error("openrouter", `POST /chat/completions falló: ${describeError(error)}`);
     throw new Error(`Error consultando OpenRouter: ${describeError(error)}`);
   }
 }
+
 
 function describeError(error: unknown): string {
   if (axios.isAxiosError(error)) {

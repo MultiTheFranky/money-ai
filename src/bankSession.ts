@@ -1,5 +1,6 @@
 import fs from "fs";
 import path from "path";
+import { logger } from "./logger";
 import { EnableBankingAccount } from "./types";
 
 const DATA_DIR = path.join(__dirname, "..", "data");
@@ -26,12 +27,14 @@ export class BankNotLinkedError extends Error {
 let pendingState: string | null = null;
 
 export function setPendingState(state: string): void {
+  logger.debug("bankSession", `Nuevo state pendiente registrado: ${state}`);
   pendingState = state;
 }
 
 /** Valida y consume el "state" pendiente (uso único, protege frente a CSRF) */
 export function consumePendingState(state: string): boolean {
   const matches = pendingState !== null && pendingState === state;
+  logger.debug("bankSession", `Consumiendo state=${state} -> ${matches ? "válido" : "inválido/expirado"}`);
   pendingState = null;
   return matches;
 }
@@ -39,6 +42,10 @@ export function consumePendingState(state: string): boolean {
 export function setLinkedSession(session: LinkedBankSession): void {
   fs.mkdirSync(DATA_DIR, { recursive: true });
   fs.writeFileSync(SESSION_FILE, JSON.stringify(session, null, 2), "utf8");
+  logger.info(
+    "bankSession",
+    `Sesión vinculada guardada en ${SESSION_FILE} (${session.aspspName}/${session.aspspCountry}, ${session.accounts.length} cuentas)`
+  );
 }
 
 export function getLinkedSession(): LinkedBankSession | null {
@@ -52,6 +59,7 @@ export function getLinkedSession(): LinkedBankSession | null {
 export function clearLinkedSession(): void {
   if (fs.existsSync(SESSION_FILE)) {
     fs.unlinkSync(SESSION_FILE);
+    logger.info("bankSession", "Sesión bancaria vinculada eliminada");
   }
 }
 
@@ -59,6 +67,7 @@ export function clearLinkedSession(): void {
 export function requireLinkedSession(): LinkedBankSession {
   const session = getLinkedSession();
   if (!session) {
+    logger.warn("bankSession", "Se solicitó la sesión vinculada pero no hay ninguna guardada");
     throw new BankNotLinkedError();
   }
   return session;

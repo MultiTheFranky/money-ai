@@ -1,5 +1,6 @@
 import jwt from "jsonwebtoken";
 import { config } from "./config";
+import { logger } from "./logger";
 
 const SESSION_TTL = "8h";
 
@@ -10,11 +11,14 @@ export interface LoginCredentials {
 
 /** Valida las credenciales del panel web contra las configuradas en el entorno */
 export function validateCredentials({ username, password }: LoginCredentials): boolean {
-  return username === config.appUsername && password === config.appPassword;
+  const valid = username === config.appUsername && password === config.appPassword;
+  logger.info("sessionAuth", `Intento de login de usuario "${username}" -> ${valid ? "correcto" : "incorrecto"}`);
+  return valid;
 }
 
 /** Genera un JWT de sesión (HS256) que protege los endpoints /api/* del panel */
 export function createSessionToken(username: string): string {
+  logger.debug("sessionAuth", `Generando JWT de sesión (HS256, TTL=${SESSION_TTL}) para "${username}"`);
   return jwt.sign({ sub: username }, config.sessionSecret, {
     algorithm: "HS256",
     expiresIn: SESSION_TTL,
@@ -26,7 +30,8 @@ export function verifySessionToken(token: string): boolean {
   try {
     jwt.verify(token, config.sessionSecret);
     return true;
-  } catch {
+  } catch (error) {
+    logger.warn("sessionAuth", `JWT de sesión inválido o expirado: ${error instanceof Error ? error.message : error}`);
     return false;
   }
 }

@@ -1,4 +1,5 @@
 import * as dotenv from "dotenv";
+import { logger } from "./logger";
 
 dotenv.config();
 
@@ -69,3 +70,18 @@ export const config: AppConfig = {
   // Nº de movimientos más relevantes que se recuperan del RAG para el análisis con IA
   ragTopK: Number(process.env.RAG_TOP_K ?? 40),
 };
+
+// Resumen de configuración sin secretos, útil para depurar qué variables de entorno se han cargado
+logger.info("config", "Configuración cargada", {
+  port: config.port,
+  appUrl: config.appUrl,
+  apiBaseUrl: config.apiBaseUrl,
+  enableBankingRedirectUrl: config.enableBankingRedirectUrl,
+  defaultLookbackDays: config.defaultLookbackDays,
+  ragTopK: config.ragTopK,
+  openRouterUrl: config.openRouterUrl,
+  openRouterModel: config.openRouterModel,
+  openRouterEmbeddingModel: config.openRouterEmbeddingModel,
+  hasOpenRouterApiKey: Boolean(config.openRouterApiKey),
+  clientIdPrefix: config.clientId.slice(0, 8) + "...",
+});
