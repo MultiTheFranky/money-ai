@@ -57,7 +57,7 @@ export const config: AppConfig = {
   openRouterModel: process.env.OPENROUTER_MODEL ?? "meta-llama/llama-3.1-8b-instruct",
   openRouterSystemPrompt: process.env.OPENROUTER_SYSTEM_PROMPT ?? DEFAULT_OPENROUTER_SYSTEM_PROMPT,
   openRouterEmbeddingsUrl: process.env.OPENROUTER_EMBEDDINGS_URL ?? "https://ai.multithefranky.com/api/v1/embeddings",
-  openRouterEmbeddingModel: process.env.OPENROUTER_EMBEDDING_MODEL ?? "openai/text-embedding-3-small",
+  openRouterEmbeddingModel: process.env.OPENROUTER_EMBEDDING_MODEL ?? "openrouter/openai/text-embedding-3-small",
   appUrl: process.env.APP_URL ?? "http://localhost:3000",
   appName: process.env.APP_NAME ?? "Money AI",
   // URL registrada en Enable Banking a la que redirige tras la autorización del usuario
