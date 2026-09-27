@@ -47,9 +47,10 @@ npm start        # ejecuta la versión compilada
 
 Para pararlo: `docker compose down`.
 
-> El contenedor corre como usuario no-root y persiste la cuenta bancaria vinculada en
-> `./data/bank-session.json` (montado como volumen). Si en Linux ves errores de permisos
-> al escribir ahí, ejecuta `mkdir -p data && sudo chown 1000:1000 data` antes de levantar el servicio.
+> El contenedor corre como usuario no-root y persiste la cuenta bancaria vinculada
+> (`bank-session.json`) en el volumen nombrado `money-ai-data`, gestionado por Docker
+> (no un bind mount), evitando así problemas de permisos entre host y contenedor.
+> Para inspeccionarlo: `docker volume inspect money-ai_money-ai-data`.
 
 ## CI/CD: publicación en Docker Hub
 

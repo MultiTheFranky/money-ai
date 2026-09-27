@@ -28,6 +28,10 @@ RUN npm ci --omit=dev && npm cache clean --force
 COPY --from=builder --chown=node:node /app/dist ./dist
 COPY --chown=node:node public ./public
 
+# Directorio donde se persiste la cuenta bancaria vinculada (bank-session.json);
+# se crea con dueño "node" para que el volumen nombrado herede permisos correctos
+RUN mkdir -p data && chown node:node data
+
 # La clave privada (.pem) y el .env se montan como volúmenes en tiempo de ejecución,
 # nunca se incluyen dentro de la imagen.
 EXPOSE 3000
