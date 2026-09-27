@@ -18,6 +18,7 @@ import { analyzeTransactionsWithAI } from "./openrouter";
 import { parseTransactionsForAI, resolveAccountMeta } from "./parser";
 import { indexTransactions, queryRag, summarizeTransactions } from "./rag";
 import { createSessionToken, validateCredentials } from "./sessionAuth";
+import { getCachedTransactions, setCachedTransactions } from "./transactionsCache";
 import { SimplifiedTransaction } from "./types";
 
 // Consulta fija usada para recuperar del RAG los movimientos más relevantes para el análisis
@@ -55,33 +56,74 @@ export interface CollectedTransactions {
 /**
  * Recorre todas las cuentas vinculadas, devuelve sus movimientos ya simplificados
  * (por defecto, los últimos 6 meses) y los indexa en el RAG local para su uso posterior.
- * Si una cuenta falla (p. ej. el ASPSP rechaza el periodo solicitado para la tarjeta),
- * se omite esa cuenta y se continúa con el resto, reportando el fallo en `accountErrors`
- * en lugar de fallar por completo o devolver un resultado vacío sin explicación.
+ *
+ * Antes de llamar al banco reutiliza la última copia cacheada si es reciente (evita agotar
+ * el número de accesos permitidos por el consentimiento PSD2). Si la llamada al banco falla
+ * (p. ej. ASPSP_RATE_LIMIT_EXCEEDED) se sirve la última copia cacheada aunque esté desactualizada,
+ * en lugar de fallar por completo. La indexación en el RAG es best-effort: si falla (p. ej. el
+ * proveedor de embeddings no está disponible) no bloquea la carga de movimientos.
  */
 async function collectAllTransactions(): Promise<CollectedTransactions> {
   const session = requireLinkedSession();
   const allTransactions: SimplifiedTransaction[] = [];
   const accountErrors: AccountFetchError[] = [];
+  const cacheTtlMs = config.transactionsCacheTtlMinutes * 60 * 1000;
 
   logger.info("server", `Recolectando movimientos de ${session.accounts.length} cuenta(s) vinculada(s) (${session.aspspName}/${session.aspspCountry})`);
 
   for (const account of session.accounts) {
     const meta = resolveAccountMeta(account);
+    const cached = getCachedTransactions(account.uid);
+
+    if (cached && cached.ageMs < cacheTtlMs) {
+      const simplified = parseTransactionsForAI(cached.transactions, meta);
+      allTransactions.push(...simplified);
+      logger.info(
+        "server",
+        `Cuenta ${account.uid} (${meta.accountName}): ${simplified.length} movimientos servidos desde caché (edad=${Math.round(cached.ageMs / 1000)}s)`
+      );
+      continue;
+    }
+
     try {
       const rawTransactions = await getTransactions(account.uid);
+      setCachedTransactions(account.uid, rawTransactions);
       const simplified = parseTransactionsForAI(rawTransactions, meta);
       allTransactions.push(...simplified);
       logger.info("server", `Cuenta ${account.uid} (${meta.accountName}): ${simplified.length} movimientos`);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      logger.error("server", `Se omite la cuenta ${account.uid} (${meta.accountName}): ${message}`);
-      accountErrors.push({ accountId: account.uid, accountName: meta.accountName ?? account.uid, message });
+      logger.error("server", `Falló la cuenta ${account.uid} (${meta.accountName}): ${message}`);
+
+      if (cached) {
+        const simplified = parseTransactionsForAI(cached.transactions, meta);
+        allTransactions.push(...simplified);
+        logger.warn(
+          "server",
+          `Cuenta ${account.uid}: se sirve caché desactualizada de ${cached.fetchedAt} tras el fallo`
+        );
+        accountErrors.push({
+          accountId: account.uid,
+          accountName: meta.accountName ?? account.uid,
+          message: `${message} (mostrando datos en caché de ${cached.fetchedAt})`,
+        });
+      } else {
+        accountErrors.push({ accountId: account.uid, accountName: meta.accountName ?? account.uid, message });
+      }
     }
   }
 
   logger.info("server", `Total recolectado: ${allTransactions.length} movimientos, ${accountErrors.length} cuenta(s) con error`);
-  await indexTransactions(allTransactions);
+
+  try {
+    await indexTransactions(allTransactions);
+  } catch (error) {
+    logger.warn(
+      "server",
+      `No se pudo indexar en el RAG (se continúa sin bloquear la carga de movimientos): ${error instanceof Error ? error.message : error}`
+    );
+  }
+
   return { transactions: allTransactions, accountErrors };
 }
 

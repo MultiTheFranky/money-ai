@@ -23,6 +23,7 @@ export interface AppConfig {
   enableBankingRedirectUrl: string;
   defaultLookbackDays: number;
   ragTopK: number;
+  transactionsCacheTtlMinutes: number;
 }
 
 function requireEnv(name: string): string {
@@ -69,6 +70,9 @@ export const config: AppConfig = {
   defaultLookbackDays: Number(process.env.DEFAULT_LOOKBACK_DAYS ?? 180),
   // Nº de movimientos más relevantes que se recuperan del RAG para el análisis con IA
   ragTopK: Number(process.env.RAG_TOP_K ?? 40),
+  // Minutos que se reutilizan los movimientos ya obtenidos antes de volver a pedirlos al banco;
+  // evita agotar el número de accesos permitidos por el consentimiento PSD2 (ASPSP_RATE_LIMIT_EXCEEDED)
+  transactionsCacheTtlMinutes: Number(process.env.TRANSACTIONS_CACHE_TTL_MINUTES ?? 15),
 };
 
 // Resumen de configuración sin secretos, útil para depurar qué variables de entorno se han cargado
@@ -79,6 +83,7 @@ logger.info("config", "Configuración cargada", {
   enableBankingRedirectUrl: config.enableBankingRedirectUrl,
   defaultLookbackDays: config.defaultLookbackDays,
   ragTopK: config.ragTopK,
+  transactionsCacheTtlMinutes: config.transactionsCacheTtlMinutes,
   openRouterUrl: config.openRouterUrl,
   openRouterModel: config.openRouterModel,
   openRouterEmbeddingModel: config.openRouterEmbeddingModel,
