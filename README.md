@@ -50,7 +50,7 @@ Para pararlo: `docker compose down`.
 ## CI/CD: publicación en Docker Hub
 
 El workflow [.github/workflows/docker-publish.yml](.github/workflows/docker-publish.yml) construye
-y publica la imagen (`linux/amd64` y `linux/arm64`) en Docker Hub al hacer push a `main` o al crear
+y publica la imagen (`linux/amd64` y `linux/arm64`) en Docker Hub al hacer push a `master` o al crear
 un tag `vX.Y.Z`. Configura estos secrets en GitHub (`Settings > Secrets and variables > Actions`):
 
 - `DOCKERHUB_USERNAME`: tu usuario de Docker Hub.
