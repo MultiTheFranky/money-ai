@@ -118,61 +118,68 @@ export async function completeBankAuthorization(code: string): Promise<Authorize
 }
 
 
+export interface GetTransactionsOptions {
+  /** Cabeceras Psu-* que indican al banco que el usuario está presente (no cuentan como acceso en segundo plano) */
+  psuHeaders?: Record<string, string>;
+  /** Ventana en días que ya funcionó para esta cuenta; null = sin filtro de fecha */
+  lookbackDays?: number | null;
+}
+
+export interface TransactionsResult {
+  transactions: RawTransaction[];
+  /** Ventana que ha funcionado, para reutilizarla y no repetir intentos rechazados */
+  lookbackDays: number | null;
+}
+
 /**
- * Obtiene las transacciones de una cuenta desde `dateFrom` (por defecto,
- * según config.defaultLookbackDays) hasta la fecha actual.
- *
- * Algunos ASPSP rechazan rangos amplios con 422 WRONG_TRANSACTIONS_PERIOD (varía según
- * banco y tipo de cuenta, p. ej. tarjetas). En ese caso se reintenta con ventanas cada vez
- * más cortas y, como último recurso, sin restricción de fecha (periodo por defecto del banco).
+ * Obtiene las transacciones de una cuenta. Algunos ASPSP rechazan rangos amplios con
+ * 422 WRONG_TRANSACTIONS_PERIOD; en ese caso se prueban ventanas más cortas. Cada intento
+ * cuenta como un acceso al consentimiento, por eso el llamante debe pasar `lookbackDays`
+ * con la ventana que ya funcionó y así ir directo a ella.
  */
 export async function getTransactions(
   accountId: string,
-  dateFrom?: string
-): Promise<RawTransaction[]> {
-  const headers = await buildAuthHeaders();
-  const primaryFromDate = dateFrom ?? dateDaysAgo(config.defaultLookbackDays);
-
-  // Solo se añaden ventanas de reintento estrictamente más cortas (fechas más recientes)
-  // que la solicitud inicial, para no repetir un rango igual o más amplio ya rechazado
-  const fallbackFromDates = [dateDaysAgo(90), dateDaysAgo(30)].filter(
-    (candidate) => candidate > primaryFromDate
-  );
-
-  const attempts: Record<string, string>[] = [
-    { date_from: primaryFromDate },
-    ...fallbackFromDates.map((date_from) => ({ date_from })),
-    {},
-  ];
+  options: GetTransactionsOptions = {}
+): Promise<TransactionsResult> {
+  const authHeaders = await buildAuthHeaders();
+  const startDays = options.lookbackDays === undefined ? config.defaultLookbackDays : options.lookbackDays;
+  const windows: (number | null)[] =
+    startDays === null ? [null] : [startDays, ...[90, 30].filter((days) => days < startDays), null];
+  let psuHeaders = options.psuHeaders ?? {};
 
   logger.info(
     "api",
-    `GET /accounts/${accountId}/transactions: ${attempts.length} ventana(s) a probar -> ${attempts
-      .map((p) => p.date_from ?? "sin fecha")
-      .join(" | ")}`
+    `GET /accounts/${accountId}/transactions: ventanas ${windows.map((d) => (d === null ? "sin fecha" : `${d}d`)).join(" | ")}, cabeceras PSU=${
+      Object.keys(psuHeaders).length > 0 ? "sí" : "no"
+    }`
   );
 
   let lastError: unknown;
+  let index = 0;
 
-  for (const [index, params] of attempts.entries()) {
-    logger.debug(
-      "api",
-      `Cuenta ${accountId}: intento ${index + 1}/${attempts.length} con date_from=${params.date_from ?? "(sin filtro)"}`
-    );
+  while (index < windows.length) {
+    const days = windows[index];
+    const params: Record<string, string> = days === null ? {} : { date_from: dateDaysAgo(days) };
+    logger.debug("api", `Cuenta ${accountId}: intento con ventana ${days === null ? "sin filtro" : `${days}d`}`);
+
     try {
-      const transactions = await fetchTransactionsPage(accountId, headers, params);
+      const transactions = await fetchAllTransactionPages(accountId, { ...authHeaders, ...psuHeaders }, params);
       logger.info(
         "api",
-        `Cuenta ${accountId}: ${transactions.length} movimientos obtenidos (intento ${index + 1}, date_from=${
-          params.date_from ?? "sin filtro"
-        })`
+        `Cuenta ${accountId}: ${transactions.length} movimientos obtenidos (ventana ${days === null ? "sin filtro" : `${days}d`})`
       );
-      return transactions;
+      return { transactions, lookbackDays: days };
     } catch (error) {
       lastError = error;
       if (isAspspRateLimitError(error)) {
         logger.error("api", `Cuenta ${accountId}: rate limit del ASPSP: ${describeAxiosError(error)}`);
         throw new AspspRateLimitError(accountId, describeAxiosError(error));
+      }
+      if (isPsuHeaderError(error) && Object.keys(psuHeaders).length > 0) {
+        // El banco exige otro juego de cabeceras PSU; se reintenta la misma ventana sin ellas
+        logger.warn("api", `Cuenta ${accountId}: cabeceras PSU rechazadas (${describeAxiosError(error)}), se reintenta sin ellas`);
+        psuHeaders = {};
+        continue;
       }
       if (!isWrongTransactionsPeriodError(error)) {
         logger.error("api", `Cuenta ${accountId}: error no recuperable: ${describeAxiosError(error)}`);
@@ -182,8 +189,9 @@ export async function getTransactions(
       }
       logger.warn(
         "api",
-        `Cuenta ${accountId}: WRONG_TRANSACTIONS_PERIOD con date_from=${params.date_from ?? "sin filtro"}, se prueba la siguiente ventana`
+        `Cuenta ${accountId}: WRONG_TRANSACTIONS_PERIOD con ventana ${days === null ? "sin filtro" : `${days}d`}, se prueba la siguiente`
       );
+      index++;
     }
   }
 
@@ -193,16 +201,44 @@ export async function getTransactions(
   );
 }
 
-async function fetchTransactionsPage(
+// Tope de seguridad por si el banco devolviera continuation_key indefinidamente
+const MAX_TRANSACTION_PAGES = 50;
+
+/** Descarga todas las páginas de movimientos siguiendo `continuation_key` hasta que el banco deje de enviarlo */
+async function fetchAllTransactionPages(
   accountId: string,
   headers: Record<string, string>,
   params: Record<string, string>
 ): Promise<RawTransaction[]> {
-  const response = await axios.get<TransactionsResponse>(
-    `${config.apiBaseUrl}/accounts/${accountId}/transactions`,
-    { headers, params }
-  );
-  return response.data.transactions;
+  const allTransactions: RawTransaction[] = [];
+  const seenKeys = new Set<string>();
+  let continuationKey: string | undefined;
+
+  for (let page = 1; page <= MAX_TRANSACTION_PAGES; page++) {
+    const response = await axios.get<TransactionsResponse>(
+      `${config.apiBaseUrl}/accounts/${accountId}/transactions`,
+      { headers, params: continuationKey ? { ...params, continuation_key: continuationKey } : params }
+    );
+
+    allTransactions.push(...response.data.transactions);
+    continuationKey = response.data.continuation_key ?? undefined;
+    logger.debug(
+      "api",
+      `Cuenta ${accountId}: página ${page} -> ${response.data.transactions.length} movimientos${continuationKey ? ", hay más páginas" : ", última página"}`
+    );
+
+    if (!continuationKey) {
+      return allTransactions;
+    }
+    if (seenKeys.has(continuationKey)) {
+      logger.warn("api", `Cuenta ${accountId}: continuation_key repetido, se detiene la paginación`);
+      return allTransactions;
+    }
+    seenKeys.add(continuationKey);
+  }
+
+  logger.warn("api", `Cuenta ${accountId}: se alcanzó el tope de ${MAX_TRANSACTION_PAGES} páginas, resultado posiblemente incompleto`);
+  return allTransactions;
 }
 
 function isWrongTransactionsPeriodError(error: unknown): boolean {
@@ -219,6 +255,14 @@ function isAspspRateLimitError(error: unknown): boolean {
   }
   const data = error.response?.data as { error?: string } | undefined;
   return data?.error === "ASPSP_RATE_LIMIT_EXCEEDED";
+}
+
+function isPsuHeaderError(error: unknown): boolean {
+  if (!axios.isAxiosError(error)) {
+    return false;
+  }
+  const data = error.response?.data as { error?: string } | undefined;
+  return data?.error === "PSU_HEADER_NOT_PROVIDED" || data?.error === "PSU_HEADER_INVALID";
 }
 
 /** Extrae un mensaje de error legible a partir de un error de axios o genérico */

@@ -1,33 +1,27 @@
-import { getTransactions } from "./api";
-import { BankNotLinkedError, requireLinkedSession } from "./bankSession";
-import { parseTransactionsForAI } from "./parser";
-import { SimplifiedTransaction } from "./types";
+import { BankNotLinkedError } from "./bankSession";
+import { collectAllTransactions } from "./collector";
 
 /**
  * Punto de entrada: usa la cuenta bancaria vinculada previamente desde el panel
  * web (`npm run dev`), extrae sus movimientos recientes y muestra el resultado
  * simplificado, listo para ser consumido por un LLM.
+ *
+ * Comparte caché y cooldown con el servidor: solo llama al banco si la caché ha caducado.
+ * Al no haber navegador no se envían cabeceras PSU, así que cada llamada real al banco
+ * cuenta para el límite diario PSD2 de accesos en segundo plano.
  */
 async function main(): Promise<void> {
   try {
-    console.log("Conectando con Enable Banking...");
+    console.log("Obteniendo movimientos (caché compartida con el servidor)...");
 
-    const session = requireLinkedSession();
-    const accounts = session.accounts;
+    const { transactions, accountErrors } = await collectAllTransactions({});
 
-    console.log(`Cuentas vinculadas (${session.aspspName}, ${session.aspspCountry}): ${accounts.length}`);
-
-    const allTransactions: SimplifiedTransaction[] = [];
-
-    for (const account of accounts) {
-      console.log(`Obteniendo movimientos de la cuenta ${account.uid}...`);
-      const rawTransactions = await getTransactions(account.uid);
-      const simplified = parseTransactionsForAI(rawTransactions);
-      allTransactions.push(...simplified);
+    for (const accountError of accountErrors) {
+      console.warn(`⚠️ ${accountError.accountName}: ${accountError.message}`);
     }
 
-    console.log("Movimientos bancarios (formato listo para IA):");
-    console.log(JSON.stringify(allTransactions, null, 2));
+    console.log(`Movimientos bancarios (formato listo para IA): ${transactions.length}`);
+    console.log(JSON.stringify(transactions, null, 2));
   } catch (error) {
     if (error instanceof BankNotLinkedError) {
       console.error(

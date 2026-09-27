@@ -10,6 +10,7 @@ interface CacheEntry {
   fetchedAt?: string;
   transactions?: RawTransaction[];
   rateLimitedUntil?: string;
+  lookbackDays?: number | null;
 }
 
 type CacheFile = Record<string, CacheEntry>;
@@ -35,6 +36,7 @@ export interface CachedTransactions {
   transactions: RawTransaction[];
   fetchedAt: string;
   ageMs: number;
+  lookbackDays?: number | null;
 }
 
 /** Devuelve la última copia cacheada de una cuenta (o null si nunca se cacheó nada) */
@@ -47,13 +49,18 @@ export function getCachedTransactions(accountId: string): CachedTransactions | n
     transactions: entry.transactions,
     fetchedAt: entry.fetchedAt,
     ageMs: Date.now() - new Date(entry.fetchedAt).getTime(),
+    lookbackDays: entry.lookbackDays,
   };
 }
 
 /** Guarda la última copia obtenida con éxito de una cuenta, para poder servirla si el banco limita el acceso */
-export function setCachedTransactions(accountId: string, transactions: RawTransaction[]): void {
+export function setCachedTransactions(
+  accountId: string,
+  transactions: RawTransaction[],
+  lookbackDays: number | null
+): void {
   const cache = readCache();
-  cache[accountId] = { ...cache[accountId], fetchedAt: new Date().toISOString(), transactions };
+  cache[accountId] = { ...cache[accountId], fetchedAt: new Date().toISOString(), transactions, lookbackDays };
   writeCache(cache);
   logger.debug("transactionsCache", `Cuenta ${accountId}: ${transactions.length} movimientos guardados en caché`);
 }

@@ -124,6 +124,7 @@
     border: 1px solid var(--border);
   }
   .btn-load:hover { background: #363c4f; }
+  .btn-load:disabled { opacity: 0.6; cursor: not-allowed; }
   .btn-load.active { background: var(--accent); border-color: var(--accent); }
 
   .btn-ai-giant {
@@ -592,6 +593,7 @@
 
   loadTransactionsBtn.addEventListener("click", async () => {
     clog("transactions", "Cargando movimientos...");
+    loadTransactionsBtn.disabled = true;
     transactionsStatus.textContent = "Cargando movimientos...";
     transactionsTableWrapper.innerHTML = "";
 
@@ -627,6 +629,8 @@
       if (error.code === "BANK_NOT_LINKED") {
         bankLinkPanel.classList.remove("hidden");
       }
+    } finally {
+      loadTransactionsBtn.disabled = false;
     }
   });
 

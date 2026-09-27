@@ -92,7 +92,7 @@ export interface RawTransaction {
 /** Respuesta cruda del endpoint GET /accounts/{id}/transactions */
 export interface TransactionsResponse {
   transactions: RawTransaction[];
-  continuation_key?: string;
+  continuation_key?: string | null;
 }
 
 /** Objeto simplificado y listo para enviar a un LLM u otro sistema de análisis */

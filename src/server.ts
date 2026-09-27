@@ -1,31 +1,31 @@
 import crypto from "crypto";
 import express, { Request, Response } from "express";
 import path from "path";
-import { completeBankAuthorization, getAspsps, getTransactions, startBankAuthorization, AspspRateLimitError } from "./api";
+import { completeBankAuthorization, getAspsps, startBankAuthorization } from "./api";
 import {
   BankNotLinkedError,
   clearLinkedSession,
   consumePendingState,
   getLinkedSession,
-  requireLinkedSession,
   setLinkedSession,
   setPendingState,
 } from "./bankSession";
+import { collectAllTransactions, CollectedTransactions } from "./collector";
 import { config } from "./config";
 import { logger } from "./logger";
 import { requireAuth } from "./middleware/requireAuth";
 import { analyzeTransactionsWithAI } from "./openrouter";
-import { parseTransactionsForAI, resolveAccountMeta } from "./parser";
 import { indexTransactions, queryRag, summarizeTransactions } from "./rag";
 import { createSessionToken, validateCredentials } from "./sessionAuth";
-import { getCachedTransactions, getRateLimitCooldownMs, setCachedTransactions, setRateLimited } from "./transactionsCache";
-import { SimplifiedTransaction } from "./types";
 
 // Consulta fija usada para recuperar del RAG los movimientos más relevantes para el análisis
 const RAG_ANALYSIS_QUERY =
   "gastos elevados, movimientos inusuales o recurrentes y principales categorías de gasto";
 
 const app = express();
+
+// La app corre tras un proxy inverso; necesario para que req.ip sea la IP real del usuario
+app.set("trust proxy", 1);
 
 app.use(express.json());
 app.use(express.static(path.join(__dirname, "..", "public")));
@@ -40,115 +40,44 @@ app.use((req: Request, res: Response, next) => {
   next();
 });
 
-/** Error ocurrido al recuperar los movimientos de una cuenta concreta */
-export interface AccountFetchError {
-  accountId: string;
-  accountName: string;
-  message: string;
-}
-
-/** Resultado de recorrer todas las cuentas vinculadas */
-export interface CollectedTransactions {
-  transactions: SimplifiedTransaction[];
-  accountErrors: AccountFetchError[];
-}
-
 /**
- * Recorre todas las cuentas vinculadas, devuelve sus movimientos ya simplificados
- * (por defecto, los últimos 6 meses) y los indexa en el RAG local para su uso posterior.
- *
- * Antes de llamar al banco reutiliza la última copia cacheada si es reciente (evita agotar
- * el número de accesos permitidos por el consentimiento PSD2). Si la llamada al banco falla
- * (p. ej. ASPSP_RATE_LIMIT_EXCEEDED) se sirve la última copia cacheada aunque esté desactualizada,
- * en lugar de fallar por completo. La indexación en el RAG es best-effort: si falla (p. ej. el
- * proveedor de embeddings no está disponible) no bloquea la carga de movimientos.
+ * Cabeceras Psu-* que indican al banco que el usuario está presente. Sin ellas, PSD2 trata la
+ * consulta como acceso en segundo plano, limitado a ~4 al día por consentimiento.
  */
-async function collectAllTransactions(): Promise<CollectedTransactions> {
-  const session = requireLinkedSession();
-  const allTransactions: SimplifiedTransaction[] = [];
-  const accountErrors: AccountFetchError[] = [];
-  const cacheTtlMs = config.transactionsCacheTtlMinutes * 60 * 1000;
-
-  logger.info("server", `Recolectando movimientos de ${session.accounts.length} cuenta(s) vinculada(s) (${session.aspspName}/${session.aspspCountry})`);
-
-  for (const account of session.accounts) {
-    const meta = resolveAccountMeta(account);
-    const cached = getCachedTransactions(account.uid);
-
-    if (cached && cached.ageMs < cacheTtlMs) {
-      const simplified = parseTransactionsForAI(cached.transactions, meta);
-      allTransactions.push(...simplified);
-      logger.info(
-        "server",
-        `Cuenta ${account.uid} (${meta.accountName}): ${simplified.length} movimientos servidos desde caché (edad=${Math.round(cached.ageMs / 1000)}s)`
-      );
-      continue;
-    }
-
-    const cooldownMs = getRateLimitCooldownMs(account.uid);
-    if (cooldownMs !== null) {
-      const remainingMin = Math.ceil(cooldownMs / 60000);
-      logger.warn(
-        "server",
-        `Cuenta ${account.uid}: en cooldown por rate limit (quedan ~${remainingMin} min), se omite la llamada al banco`
-      );
-      if (cached) {
-        allTransactions.push(...parseTransactionsForAI(cached.transactions, meta));
-      }
-      accountErrors.push({
-        accountId: account.uid,
-        accountName: meta.accountName ?? account.uid,
-        message: cached
-          ? `El banco limitó los accesos a esta cuenta; se muestran datos en caché de ${cached.fetchedAt}. Podrás reintentar en ~${remainingMin} min.`
-          : `El banco ha limitado los accesos a esta cuenta. Podrás reintentar en ~${remainingMin} min.`,
-      });
-      continue;
-    }
-
-    try {
-      const rawTransactions = await getTransactions(account.uid);
-      setCachedTransactions(account.uid, rawTransactions);
-      const simplified = parseTransactionsForAI(rawTransactions, meta);
-      allTransactions.push(...simplified);
-      logger.info("server", `Cuenta ${account.uid} (${meta.accountName}): ${simplified.length} movimientos`);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      logger.error("server", `Falló la cuenta ${account.uid} (${meta.accountName}): ${message}`);
-
-      if (error instanceof AspspRateLimitError) {
-        setRateLimited(account.uid, config.rateLimitCooldownMinutes * 60 * 1000);
-      }
-
-      if (cached) {
-        const simplified = parseTransactionsForAI(cached.transactions, meta);
-        allTransactions.push(...simplified);
-        logger.warn(
-          "server",
-          `Cuenta ${account.uid}: se sirve caché desactualizada de ${cached.fetchedAt} tras el fallo`
-        );
-        accountErrors.push({
-          accountId: account.uid,
-          accountName: meta.accountName ?? account.uid,
-          message: `${message} (mostrando datos en caché de ${cached.fetchedAt})`,
-        });
-      } else {
-        accountErrors.push({ accountId: account.uid, accountName: meta.accountName ?? account.uid, message });
-      }
+function buildPsuHeaders(req: Request): Record<string, string> {
+  const headers: Record<string, string> = {};
+  const ip = req.ip?.replace(/^::ffff:/, "");
+  if (ip) {
+    headers["Psu-Ip-Address"] = ip;
+  }
+  const forwarded: [string, string][] = [
+    ["user-agent", "Psu-User-Agent"],
+    ["referer", "Psu-Referer"],
+    ["accept", "Psu-Accept"],
+    ["accept-encoding", "Psu-Accept-Encoding"],
+    ["accept-language", "Psu-Accept-Language"],
+  ];
+  for (const [source, target] of forwarded) {
+    const value = req.get(source);
+    if (value) {
+      headers[target] = value;
     }
   }
+  return headers;
+}
 
-  logger.info("server", `Total recolectado: ${allTransactions.length} movimientos, ${accountErrors.length} cuenta(s) con error`);
-
+/** Recolecta los movimientos y los indexa en el RAG; si la indexación falla, no bloquea la carga */
+async function collectAndIndex(psuHeaders: Record<string, string>): Promise<CollectedTransactions> {
+  const collected = await collectAllTransactions(psuHeaders);
   try {
-    await indexTransactions(allTransactions);
+    await indexTransactions(collected.transactions);
   } catch (error) {
     logger.warn(
       "server",
       `No se pudo indexar en el RAG (se continúa sin bloquear la carga de movimientos): ${error instanceof Error ? error.message : error}`
     );
   }
-
-  return { transactions: allTransactions, accountErrors };
+  return collected;
 }
 
 /** Traduce un error a la respuesta HTTP adecuada, distinguiendo la falta de vínculo bancario */
@@ -255,19 +184,19 @@ app.get("/callback", async (req: Request, res: Response) => {
   }
 });
 
-app.get("/api/transactions", requireAuth, async (_req: Request, res: Response) => {
+app.get("/api/transactions", requireAuth, async (req: Request, res: Response) => {
   try {
-    const { transactions, accountErrors } = await collectAllTransactions();
+    const { transactions, accountErrors } = await collectAndIndex(buildPsuHeaders(req));
     res.json({ transactions, ragIndexed: transactions.length, accountErrors });
   } catch (error) {
     respondWithError(res, error);
   }
 });
 
-app.post("/api/analyze", requireAuth, async (_req: Request, res: Response) => {
+app.post("/api/analyze", requireAuth, async (req: Request, res: Response) => {
   try {
     logger.info("server", "Iniciando análisis con IA...");
-    const { transactions } = await collectAllTransactions();
+    const { transactions } = await collectAndIndex(buildPsuHeaders(req));
     const summary = summarizeTransactions(transactions);
     logger.debug("server", `Resumen agregado generado para el prompt:\n${summary}`);
     const relevant = await queryRag(RAG_ANALYSIS_QUERY, config.ragTopK);
