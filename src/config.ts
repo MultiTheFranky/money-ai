@@ -17,6 +17,7 @@ export interface AppConfig {
   openRouterSystemPrompt: string;
   appUrl: string;
   appName: string;
+  enableBankingRedirectUrl: string;
 }
 
 function requireEnv(name: string): string {
@@ -50,4 +51,8 @@ export const config: AppConfig = {
   openRouterSystemPrompt: process.env.OPENROUTER_SYSTEM_PROMPT ?? DEFAULT_OPENROUTER_SYSTEM_PROMPT,
   appUrl: process.env.APP_URL ?? "http://localhost:3000",
   appName: process.env.APP_NAME ?? "Money AI",
+  // URL registrada en Enable Banking a la que redirige tras la autorización del usuario
+  enableBankingRedirectUrl:
+    process.env.ENABLEBANKING_REDIRECT_URL ??
+    `${process.env.APP_URL ?? "http://localhost:3000"}/api/bank-link/callback`,
 };

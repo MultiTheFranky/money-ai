@@ -3,7 +3,7 @@
  * https://api.enablebanking.com
  */
 
-/** Cuenta bancaria tal como la devuelve el endpoint GET /accounts */
+/** Cuenta bancaria (AccountResource) tal como la devuelve POST /sessions al autorizar el acceso */
 export interface EnableBankingAccount {
   uid: string;
   account_id: {
@@ -25,9 +25,35 @@ export interface EnableBankingAccount {
   [key: string]: unknown;
 }
 
-/** Respuesta cruda del endpoint GET /accounts */
-export interface AccountsResponse {
+/** Banco (ASPSP) tal como lo devuelve el endpoint GET /aspsps */
+export interface Aspsp {
+  name: string;
+  country: string;
+  logo?: string;
+  [key: string]: unknown;
+}
+
+/** Respuesta cruda del endpoint GET /aspsps */
+export interface AspspsResponse {
+  aspsps: Aspsp[];
+}
+
+/** Respuesta de POST /auth: URL a la que redirigir al usuario para autorizar el acceso */
+export interface StartAuthorizationResponse {
+  url: string;
+  authorization_id: string;
+  psu_id_hash?: string;
+}
+
+/** Respuesta de POST /sessions: sesión autorizada junto con las cuentas accesibles */
+export interface AuthorizeSessionResponse {
+  session_id: string;
   accounts: EnableBankingAccount[];
+  aspsp: Aspsp;
+  psu_type: string;
+  access: {
+    valid_until: string;
+  };
 }
 
 /** Importe con signo y divisa tal como lo modela Enable Banking */

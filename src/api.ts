@@ -2,12 +2,17 @@ import axios, { AxiosError } from "axios";
 import { generateToken } from "./auth";
 import { config } from "./config";
 import {
-  AccountsResponse,
+  AspspsResponse,
+  AuthorizeSessionResponse,
+  Aspsp,
   RawTransaction,
+  StartAuthorizationResponse,
   TransactionsResponse,
 } from "./types";
 
 const DEFAULT_LOOKBACK_DAYS = 7;
+// Máxima validez del consentimiento solicitado al ASPSP (90 días)
+const CONSENT_VALIDITY_MS = 90 * 24 * 60 * 60 * 1000;
 
 /** Construye los headers de autorización necesarios para llamar a la API */
 async function buildAuthHeaders(): Promise<Record<string, string>> {
@@ -25,24 +30,73 @@ function dateDaysAgo(daysAgo: number): string {
   return date.toISOString().split("T")[0];
 }
 
-/**
- * Obtiene la lista de cuentas bancarias disponibles para la sesión autenticada
- * y devuelve un array con sus `account_id` (uid interno de Enable Banking).
- */
-export async function getAccounts(): Promise<string[]> {
+/** Obtiene la lista de bancos (ASPSPs) disponibles, opcionalmente filtrados por país */
+export async function getAspsps(country?: string): Promise<Aspsp[]> {
   try {
     const headers = await buildAuthHeaders();
 
-    const response = await axios.get<AccountsResponse>(
-      `${config.apiBaseUrl}/accounts`,
+    const response = await axios.get<AspspsResponse>(`${config.apiBaseUrl}/aspsps`, {
+      headers,
+      params: country ? { country } : undefined,
+    });
+
+    return response.data.aspsps;
+  } catch (error) {
+    throw new Error(`Error obteniendo la lista de bancos: ${describeAxiosError(error)}`);
+  }
+}
+
+/**
+ * Inicia el flujo de autorización con un ASPSP concreto y devuelve la URL a la que
+ * hay que redirigir al usuario para que autorice el acceso a sus cuentas.
+ */
+export async function startBankAuthorization(
+  aspspName: string,
+  aspspCountry: string,
+  state: string
+): Promise<StartAuthorizationResponse> {
+  try {
+    const headers = await buildAuthHeaders();
+    const validUntil = new Date(Date.now() + CONSENT_VALIDITY_MS).toISOString();
+
+    const response = await axios.post<StartAuthorizationResponse>(
+      `${config.apiBaseUrl}/auth`,
+      {
+        access: { valid_until: validUntil },
+        aspsp: { name: aspspName, country: aspspCountry },
+        state,
+        redirect_url: config.enableBankingRedirectUrl,
+        psu_type: "personal",
+      },
       { headers }
     );
 
-    return response.data.accounts.map((account) => account.uid);
+    return response.data;
   } catch (error) {
-    throw new Error(`Error obteniendo cuentas: ${describeAxiosError(error)}`);
+    throw new Error(`Error iniciando la autorización bancaria: ${describeAxiosError(error)}`);
   }
 }
+
+/**
+ * Completa la autorización con el `code` devuelto en el callback y obtiene la
+ * sesión autorizada junto con la lista de cuentas accesibles.
+ */
+export async function completeBankAuthorization(code: string): Promise<AuthorizeSessionResponse> {
+  try {
+    const headers = await buildAuthHeaders();
+
+    const response = await axios.post<AuthorizeSessionResponse>(
+      `${config.apiBaseUrl}/sessions`,
+      { code },
+      { headers }
+    );
+
+    return response.data;
+  } catch (error) {
+    throw new Error(`Error completando la autorización bancaria: ${describeAxiosError(error)}`);
+  }
+}
+
 
 /**
  * Obtiene las transacciones de una cuenta desde `dateFrom` (por defecto,

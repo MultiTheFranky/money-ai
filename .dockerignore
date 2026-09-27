@@ -7,4 +7,5 @@ npm-debug.log
 .env.*
 *.pem
 keys/
+data/
 README.md

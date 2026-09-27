@@ -47,6 +47,10 @@ npm start        # ejecuta la versión compilada
 
 Para pararlo: `docker compose down`.
 
+> El contenedor corre como usuario no-root y persiste la cuenta bancaria vinculada en
+> `./data/bank-session.json` (montado como volumen). Si en Linux ves errores de permisos
+> al escribir ahí, ejecuta `mkdir -p data && sudo chown 1000:1000 data` antes de levantar el servicio.
+
 ## CI/CD: publicación en Docker Hub
 
 El workflow [.github/workflows/docker-publish.yml](.github/workflows/docker-publish.yml) construye

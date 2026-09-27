@@ -17,6 +17,8 @@ services:
     volumes:
       # Monta tu clave privada RSA en modo solo lectura; nunca se copia a la imagen
       - ./keys:/app/keys:ro
+      # Persiste la cuenta bancaria vinculada entre reinicios del contenedor
+      - ./data:/app/data
     networks:
       - money-ai-net
 
