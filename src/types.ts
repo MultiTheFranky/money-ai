@@ -101,4 +101,8 @@ export interface SimplifiedTransaction {
   amount: number;
   currency: string;
   concept: string;
+  /** Nombre/alias de la cuenta o tarjeta de origen (p. ej. "Tarjeta Visa ****1234") */
+  accountName?: string;
+  /** Tipo de cuenta tal como lo informa Enable Banking (CACC, CARD, SVGS, ...) */
+  accountType?: string;
 }

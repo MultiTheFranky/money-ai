@@ -14,7 +14,7 @@ import {
 import { config } from "./config";
 import { requireAuth } from "./middleware/requireAuth";
 import { analyzeTransactionsWithAI } from "./openrouter";
-import { parseTransactionsForAI } from "./parser";
+import { parseTransactionsForAI, resolveAccountMeta } from "./parser";
 import { indexTransactions, queryRag, summarizeTransactions } from "./rag";
 import { createSessionToken, validateCredentials } from "./sessionAuth";
 import { SimplifiedTransaction } from "./types";
@@ -38,7 +38,7 @@ async function collectAllTransactions(): Promise<SimplifiedTransaction[]> {
 
   for (const account of session.accounts) {
     const rawTransactions = await getTransactions(account.uid);
-    allTransactions.push(...parseTransactionsForAI(rawTransactions));
+    allTransactions.push(...parseTransactionsForAI(rawTransactions, resolveAccountMeta(account)));
   }
 
   await indexTransactions(allTransactions);

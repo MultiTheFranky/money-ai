@@ -19,7 +19,8 @@ export interface RagEntry {
 /** Representación textual de un movimiento, lista para generar su embedding */
 function buildTransactionText(tx: SimplifiedTransaction): string {
   const kind = tx.amount >= 0 ? "ingreso" : "gasto";
-  return `${tx.date} | ${kind} de ${Math.abs(tx.amount).toFixed(2)} ${tx.currency} | ${tx.concept}`;
+  const account = tx.accountName ? ` | cuenta: ${tx.accountName}${tx.accountType === "CARD" ? " (tarjeta)" : ""}` : "";
+  return `${tx.date} | ${kind} de ${Math.abs(tx.amount).toFixed(2)} ${tx.currency} | ${tx.concept}${account}`;
 }
 
 /** Genera embeddings para una lista de textos llamando a POST /embeddings de OpenRouter */
@@ -145,6 +146,23 @@ export function summarizeTransactions(transactions: SimplifiedTransaction[]): st
     lines.push(
       `- ${currency}: ingresos ${income.toFixed(2)}, gastos ${expense.toFixed(2)}, neto ${(income - expense).toFixed(2)}.`
     );
+  }
+
+  const cardTransactions = transactions.filter((tx) => tx.accountType === "CARD");
+  if (cardTransactions.length > 0) {
+    const cardExpenseByCurrency = new Map<string, number>();
+    for (const tx of cardTransactions) {
+      if (tx.amount < 0) {
+        cardExpenseByCurrency.set(
+          tx.currency,
+          (cardExpenseByCurrency.get(tx.currency) ?? 0) + Math.abs(tx.amount)
+        );
+      }
+    }
+    lines.push(`Gasto con tarjeta (${cardTransactions.length} movimientos):`);
+    for (const [currency, expense] of cardExpenseByCurrency) {
+      lines.push(`- ${currency}: ${expense.toFixed(2)} gastados con tarjeta.`);
+    }
   }
 
   return lines.join("\n");

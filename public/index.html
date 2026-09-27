@@ -124,6 +124,7 @@
     border: 1px solid var(--border);
   }
   .btn-load:hover { background: #363c4f; }
+  .btn-load.active { background: var(--accent); border-color: var(--accent); }
 
   .btn-ai-giant {
     display: block;
@@ -153,6 +154,17 @@
   td.amount-positive { color: var(--positive); font-weight: 600; }
   td.amount-negative { color: var(--negative); font-weight: 600; }
   .empty-hint { color: var(--muted); font-size: 13px; }
+  #cardSummary { font-size: 13px; color: var(--muted); margin: 8px 0 12px; }
+  #cardSummary strong { color: var(--text); }
+  .badge-card {
+    display: inline-block;
+    font-size: 11px;
+    padding: 2px 6px;
+    border-radius: 6px;
+    background: rgba(108, 92, 231, 0.2);
+    color: #b9a7ff;
+    margin-left: 6px;
+  }
 
   #analysisContainer {
     background: #12141c;
@@ -260,8 +272,12 @@
     <div class="panel-section">
       <div class="actions-row">
         <button class="btn-load" id="loadTransactionsBtn">Cargar Movimientos</button>
+        <button class="btn-load hidden" id="filterAllBtn">Todos</button>
+        <button class="btn-load hidden" id="filterCardBtn">💳 Solo tarjeta</button>
+        <button class="btn-load hidden" id="filterAccountBtn">🏦 Solo cuenta</button>
       </div>
       <div id="transactionsStatus" class="loading-text"></div>
+      <div id="cardSummary"></div>
       <div id="transactionsTableWrapper"></div>
     </div>
 
@@ -281,8 +297,14 @@
   const loginError = document.getElementById("loginError");
   const logoutBtn = document.getElementById("logoutBtn");
   const loadTransactionsBtn = document.getElementById("loadTransactionsBtn");
+  const filterAllBtn = document.getElementById("filterAllBtn");
+  const filterCardBtn = document.getElementById("filterCardBtn");
+  const filterAccountBtn = document.getElementById("filterAccountBtn");
   const transactionsStatus = document.getElementById("transactionsStatus");
+  const cardSummary = document.getElementById("cardSummary");
   const transactionsTableWrapper = document.getElementById("transactionsTableWrapper");
+  let loadedTransactions = [];
+  let currentFilter = "all";
   const analyzeBtn = document.getElementById("analyzeBtn");
   const analysisStatus = document.getElementById("analysisStatus");
   const analysisContainer = document.getElementById("analysisContainer");
@@ -470,7 +492,11 @@
   unlinkBankBtn.addEventListener("click", async () => {
     try {
       await apiFetch("/api/bank-link/unlink", { method: "POST" });
+      loadedTransactions = [];
       transactionsTableWrapper.innerHTML = "";
+      cardSummary.innerHTML = "";
+      transactionsStatus.textContent = "";
+      [filterAllBtn, filterCardBtn, filterAccountBtn].forEach((btn) => btn.classList.add("hidden"));
       analysisContainer.classList.add("hidden");
       analysisContainer.innerHTML = "";
       await refreshBankLinkStatus();
@@ -520,7 +546,11 @@
 
   logoutBtn.addEventListener("click", () => {
     clearToken();
+    loadedTransactions = [];
     transactionsTableWrapper.innerHTML = "";
+    cardSummary.innerHTML = "";
+    transactionsStatus.textContent = "";
+    [filterAllBtn, filterCardBtn, filterAccountBtn].forEach((btn) => btn.classList.add("hidden"));
     analysisContainer.classList.add("hidden");
     analysisContainer.innerHTML = "";
     showLogin();
@@ -541,7 +571,12 @@
       }
 
       transactionsStatus.textContent = `${transactions.length} movimientos (últimos 6 meses), indexados en el RAG.`;
-      transactionsTableWrapper.innerHTML = buildTransactionsTable(transactions);
+      loadedTransactions = transactions;
+      currentFilter = "all";
+      filterAllBtn.classList.remove("hidden");
+      filterCardBtn.classList.remove("hidden");
+      filterAccountBtn.classList.remove("hidden");
+      renderTransactions();
     } catch (error) {
       transactionsStatus.textContent = error.message;
       if (error.code === "BANK_NOT_LINKED") {
@@ -550,17 +585,64 @@
     }
   });
 
+  function setFilter(filter) {
+    currentFilter = filter;
+    [filterAllBtn, filterCardBtn, filterAccountBtn].forEach((btn) => btn.classList.remove("active"));
+    if (filter === "card") filterCardBtn.classList.add("active");
+    else if (filter === "account") filterAccountBtn.classList.add("active");
+    else filterAllBtn.classList.add("active");
+    renderTransactions();
+  }
+
+  filterAllBtn.addEventListener("click", () => setFilter("all"));
+  filterCardBtn.addEventListener("click", () => setFilter("card"));
+  filterAccountBtn.addEventListener("click", () => setFilter("account"));
+
+  function renderTransactions() {
+    const filtered = loadedTransactions.filter((tx) => {
+      if (currentFilter === "card") return tx.accountType === "CARD";
+      if (currentFilter === "account") return tx.accountType !== "CARD";
+      return true;
+    });
+
+    cardSummary.innerHTML = buildCardSummary(loadedTransactions);
+
+    if (filtered.length === 0) {
+      transactionsTableWrapper.innerHTML = '<p class="empty-hint">No hay movimientos para este filtro.</p>';
+      return;
+    }
+
+    transactionsTableWrapper.innerHTML = buildTransactionsTable(filtered);
+  }
+
+  function buildCardSummary(transactions) {
+    const cardExpenseByCurrency = {};
+    for (const tx of transactions) {
+      if (tx.accountType === "CARD" && tx.amount < 0) {
+        cardExpenseByCurrency[tx.currency] = (cardExpenseByCurrency[tx.currency] || 0) + Math.abs(tx.amount);
+      }
+    }
+    const currencies = Object.keys(cardExpenseByCurrency);
+    if (currencies.length === 0) return "";
+
+    const parts = currencies.map((currency) => `<strong>${cardExpenseByCurrency[currency].toFixed(2)} ${escapeHtml(currency)}</strong>`);
+    return `💳 Gasto total con tarjeta: ${parts.join(", ")}`;
+  }
+
   function buildTransactionsTable(transactions) {
     const rows = transactions
       .map((tx) => {
         const amountClass = tx.amount < 0 ? "amount-negative" : "amount-positive";
         const amountText = `${tx.amount > 0 ? "+" : ""}${tx.amount.toFixed(2)}`;
+        const isCard = tx.accountType === "CARD";
+        const accountLabel = tx.accountName ? escapeHtml(tx.accountName) : "-";
         return `
           <tr>
             <td>${escapeHtml(tx.date || "")}</td>
             <td class="${amountClass}">${escapeHtml(amountText)}</td>
             <td>${escapeHtml(tx.currency || "")}</td>
             <td>${escapeHtml(tx.concept || "")}</td>
+            <td>${accountLabel}${isCard ? '<span class="badge-card">💳 Tarjeta</span>' : ""}</td>
           </tr>`;
       })
       .join("");
@@ -568,7 +650,7 @@
     return `
       <table>
         <thead>
-          <tr><th>Fecha</th><th>Importe</th><th>Divisa</th><th>Concepto</th></tr>
+          <tr><th>Fecha</th><th>Importe</th><th>Divisa</th><th>Concepto</th><th>Cuenta</th></tr>
         </thead>
         <tbody>${rows}</tbody>
       </table>`;

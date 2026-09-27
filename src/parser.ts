@@ -1,4 +1,4 @@
-import { RawTransaction, SimplifiedTransaction } from "./types";
+import { EnableBankingAccount, RawTransaction, SimplifiedTransaction } from "./types";
 
 /**
  * Convierte el signo del importe según el indicador crédito/débito de Enable Banking.
@@ -52,17 +52,37 @@ function resolveConcept(transaction: RawTransaction): string {
   return "Sin concepto";
 }
 
+/** Metadatos de la cuenta/tarjeta de origen, adjuntados a cada movimiento simplificado */
+export interface AccountMeta {
+  accountName?: string;
+  accountType?: string;
+}
+
+/** Deriva un nombre legible y el tipo de cuenta (CACC, CARD, ...) a partir de un AccountResource */
+export function resolveAccountMeta(account: EnableBankingAccount): AccountMeta {
+  const iban = account.account_id?.iban;
+  const maskedIban = iban ? `IBAN ****${iban.slice(-4)}` : undefined;
+
+  return {
+    accountName: account.name ?? account.product ?? maskedIban ?? "Cuenta",
+    accountType: account.cash_account_type,
+  };
+}
+
 /**
  * Limpia y transforma las transacciones crudas de Enable Banking en objetos
  * simplificados, listos para ser enviados a un LLM u otro sistema de análisis.
  */
 export function parseTransactionsForAI(
-  rawTransactions: RawTransaction[]
+  rawTransactions: RawTransaction[],
+  accountMeta: AccountMeta = {}
 ): SimplifiedTransaction[] {
   return rawTransactions.map((transaction) => ({
     date: resolveDate(transaction),
     amount: resolveSignedAmount(transaction),
     currency: transaction.transaction_amount.currency,
     concept: resolveConcept(transaction),
+    accountName: accountMeta.accountName,
+    accountType: accountMeta.accountType,
   }));
 }
